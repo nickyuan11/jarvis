@@ -1,0 +1,9 @@
+# 本地私密配置，不会提交到 Git。
+# 第一次使用：把 application-local.yml.example 复制成 application-local.yml，再填上自己的值。
+spring:
+  datasource:
+    username: root
+    password: 在这里填你的MySQL密码
+  ai:
+    deepseek:
+      api-key: 在这里填你的DeepSeek API Key

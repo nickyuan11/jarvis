@@ -1,0 +1,38 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: jarvis
+  # 读取本地私密配置（密码、API Key），这个文件已被 .gitignore 忽略
+  config:
+    import: optional:classpath:application-local.yml
+  datasource:
+    url: jdbc:mysql://localhost:3306/jarvis?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:}
+  ai:
+    deepseek:
+      # API Key 放在 application-local.yml 里，这里只是兜底读环境变量
+      api-key: ${DEEPSEEK_API_KEY:}
+      chat:
+        model: deepseek-v4-flash
+
+jarvis:
+  chat:
+    # 每次请求带上最近多少条历史消息作为上下文
+    history-size: 20
+    system-prompt: |
+      你是 Jarvis，一个友好、简洁的个人 AI 助手。
+      回答使用用户提问的语言；不确定的事情直接说不确定，不要编造。
+
+mybatis-plus:
+  configuration:
+    # 学习阶段把执行的 SQL 打印到控制台，方便观察
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      # 逻辑删除：调用 delete 时实际执行 update deleted = 1
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
