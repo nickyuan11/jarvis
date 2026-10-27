@@ -7,3 +7,7 @@ spring:
   ai:
     deepseek:
       api-key: 在这里填你的DeepSeek API Key
+
+jarvis:
+  jwt:
+    secret: 在这里填一段随机生成的Base64字符串

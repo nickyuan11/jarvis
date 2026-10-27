@@ -1,9 +1,14 @@
 package com.nick.jarvis.security;
 
+import org.springframework.http.HttpStatus;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.server.ResponseStatusException;
+
 /**
  * 获取当前登录用户。
- * 现在还没有登录功能，先固定返回 1。
- * 把这件事集中到一个地方，以后接入登录时只需要改这里，业务代码不用动。
+ * JwtAuthenticationFilter 校验 token 后，把用户 id 放进了 SecurityContext，这里把它取出来。
+ * 业务代码只调用 CurrentUser.id()，不需要关心登录是怎么实现的。
  */
 public final class CurrentUser {
 
@@ -11,6 +16,10 @@ public final class CurrentUser {
     }
 
     public static Long id() {
-        return 1L;
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication != null && authentication.getPrincipal() instanceof Long userId) {
+            return userId;
+        }
+        throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "请先登录");
     }
 }

@@ -4,6 +4,11 @@ server:
 spring:
   application:
     name: jarvis
+  web:
+    error:
+      # 出错时把异常信息（比如“用户名或密码错误”）返回给前端
+      # 注意：Spring Boot 4 之前这个配置叫 server.error.include-message
+      include-message: always
   mvc:
     async:
       # 流式接口是异步请求，给足时间，避免长回复被中途断开
@@ -23,6 +28,11 @@ spring:
         model: deepseek-v4-flash
 
 jarvis:
+  jwt:
+    # 签名密钥放在 application-local.yml 里，至少 32 字节（Base64 编码后约 44 个字符）
+    secret: ${JWT_SECRET:}
+    # token 有效期
+    expiration: 7d
   chat:
     # 每次请求带上最近多少条历史消息作为上下文
     history-size: 20

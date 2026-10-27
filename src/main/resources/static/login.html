@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>登录 · Jarvis</title>
+    <style>
+        :root {
+            --bg: #f6f5f1;
+            --panel: #ffffff;
+            --text: #1f1f1d;
+            --muted: #7a776f;
+            --line: #e4e1d8;
+            --accent: #2f5d50;
+            --error: #b3412e;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #171816;
+                --panel: #20221f;
+                --text: #ecebe6;
+                --muted: #9a978e;
+                --line: #33352f;
+                --accent: #7fb9a5;
+                --error: #e07a63;
+            }
+        }
+        * { box-sizing: border-box; }
+        html, body { height: 100%; margin: 0; }
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+        }
+        .card {
+            width: 100%;
+            max-width: 360px;
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            padding: 32px 28px;
+        }
+        .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+        .dot {
+            width: 10px; height: 10px; border-radius: 50%;
+            background: var(--accent);
+            box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 20%, transparent);
+        }
+        h1 { font-size: 20px; margin: 0; letter-spacing: 0.5px; }
+        .sub { color: var(--muted); font-size: 14px; margin: 0 0 24px; }
+        label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 6px; }
+        input {
+            width: 100%;
+            font: inherit;
+            color: var(--text);
+            background: var(--bg);
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 10px 12px;
+        }
+        input:focus { outline: 2px solid color-mix(in srgb, var(--accent) 40%, transparent); border-color: var(--accent); }
+        .submit {
+            width: 100%;
+            margin-top: 22px;
+            font: inherit;
+            cursor: pointer;
+            border: none;
+            border-radius: 10px;
+            padding: 11px;
+            background: var(--accent);
+            color: #fff;
+        }
+        .submit:disabled { opacity: 0.6; cursor: not-allowed; }
+        .field-hint { font-size: 12px; color: var(--muted); margin-top: 6px; display: none; }
+        .card.register .field-hint { display: block; }
+        .field-hint.invalid { color: var(--error); }
+        .error { color: var(--error); font-size: 13px; min-height: 18px; margin-top: 12px; }
+        .switch { text-align: center; font-size: 14px; color: var(--muted); margin-top: 8px; }
+        .switch button {
+            font: inherit; color: var(--accent); background: none; border: none; cursor: pointer; padding: 0;
+        }
+        .register-only { display: none; }
+        .card.register .register-only { display: block; }
+    </style>
+</head>
+<body>
+<form class="card" id="form" novalidate>
+    <div class="brand"><div class="dot"></div><h1>JARVIS</h1></div>
+    <p class="sub" id="sub">登录以继续</p>
+
+    <label for="username">用户名</label>
+    <input id="username" autocomplete="username" required>
+    <div class="field-hint" id="username-hint">3 到 20 位英文字母、数字或下划线，不能有空格</div>
+
+    <div class="register-only">
+        <label for="nickname">昵称（可选）</label>
+        <input id="nickname" autocomplete="nickname">
+    </div>
+
+    <label for="password">密码</label>
+    <input id="password" type="password" autocomplete="current-password" required>
+
+    <button class="submit" id="submit" type="submit">登录</button>
+    <div class="error" id="error"></div>
+    <div class="switch"><span id="switch-text">还没有账号？</span><button type="button" id="switch">注册</button></div>
+</form>
+
+<script>
+    // 已经登录过就直接进聊天页
+    if (localStorage.getItem('jarvis_token')) location.replace('/');
+
+    const form = document.getElementById('form');
+    const errorEl = document.getElementById('error');
+    const submitBtn = document.getElementById('submit');
+    let mode = 'login';
+
+    // 和后端 AuthService 的规则保持一致。前端检查只为了及时提示，真正的校验在后端
+    const USERNAME_RULE = /^[A-Za-z0-9_]{3,20}$/;
+    const usernameInput = document.getElementById('username');
+    const usernameHint = document.getElementById('username-hint');
+
+    function usernameProblem(value) {
+        if (/\s/.test(value)) return '用户名不能包含空格';
+        if (/[^\x00-\x7F]/.test(value)) return '用户名不能包含中文或全角字符';
+        if (!USERNAME_RULE.test(value)) return '用户名需为 3 到 20 位英文字母、数字或下划线';
+        return null;
+    }
+
+    // 注册模式下，边输入边检查
+    usernameInput.addEventListener('input', () => {
+        if (mode !== 'register') return;
+        const value = usernameInput.value;
+        const problem = value ? usernameProblem(value) : null;
+        usernameHint.classList.toggle('invalid', !!problem);
+        usernameHint.textContent = problem || '3 到 20 位英文字母、数字或下划线，不能有空格';
+    });
+
+    function setMode(next) {
+        mode = next;
+        const isRegister = mode === 'register';
+        form.classList.toggle('register', isRegister);
+        document.getElementById('sub').textContent = isRegister ? '创建一个新账号' : '登录以继续';
+        submitBtn.textContent = isRegister ? '注册' : '登录';
+        document.getElementById('switch-text').textContent = isRegister ? '已有账号？' : '还没有账号？';
+        document.getElementById('switch').textContent = isRegister ? '登录' : '注册';
+        document.getElementById('password').autocomplete = isRegister ? 'new-password' : 'current-password';
+        errorEl.textContent = '';
+        usernameHint.classList.remove('invalid');
+        usernameHint.textContent = '3 到 20 位英文字母、数字或下划线，不能有空格';
+    }
+
+    document.getElementById('switch').addEventListener('click', () => setMode(mode === 'login' ? 'register' : 'login'));
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        errorEl.textContent = '';
+        const body = {
+            // 登录时去掉首尾空格，兼容不小心多敲的空格；注册时保持原样，让规则检查生效
+            username: mode === 'register' ? usernameInput.value : usernameInput.value.trim(),
+            password: document.getElementById('password').value
+        };
+        if (!body.username || !body.password) {
+            errorEl.textContent = '请输入用户名和密码';
+            return;
+        }
+        if (mode === 'register') {
+            const problem = usernameProblem(body.username);
+            if (problem) {
+                // 问题显示在用户名下方，紧挨着出错的输入框
+                usernameHint.textContent = problem;
+                usernameHint.classList.add('invalid');
+                usernameInput.focus();
+                return;
+            }
+            body.nickname = document.getElementById('nickname').value.trim();
+        }
+
+        submitBtn.disabled = true;
+        try {
+            const resp = await fetch('/api/auth/' + mode, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok) {
+                errorEl.textContent = data.message || ('请求失败（HTTP ' + resp.status + '）');
+                return;
+            }
+            localStorage.setItem('jarvis_token', data.token);
+            localStorage.setItem('jarvis_user', JSON.stringify(data.user));
+            location.replace('/');
+        } catch (err) {
+            errorEl.textContent = '无法连接服务器';
+        } finally {
+            submitBtn.disabled = false;
+        }
+    });
+</script>
+</body>
+</html>

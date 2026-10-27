@@ -72,6 +72,17 @@
             background: var(--bg); border: 1px solid var(--accent); border-radius: 6px; padding: 2px 6px;
         }
         .conv-empty { color: var(--muted); font-size: 13px; padding: 10px; }
+        .aside-foot {
+            border-top: 1px solid var(--line);
+            padding: 12px 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            font-size: 14px;
+        }
+        #user-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        #logout { padding: 4px 10px; font-size: 13px; }
         /* ---------- 右侧聊天区 ---------- */
         .chat { flex: 1; min-width: 0; display: flex; flex-direction: column; }
         #toggle-aside { display: none; }
@@ -178,6 +189,10 @@
 <aside id="aside">
     <div class="aside-head"><button id="new-chat" type="button">＋ 新对话</button></div>
     <ul id="conv-list"></ul>
+    <div class="aside-foot">
+        <span id="user-name"></span>
+        <button id="logout" type="button">退出</button>
+    </div>
 </aside>
 
 <div class="chat">
@@ -206,6 +221,28 @@
 </div>
 
 <script>
+    // ---------------- 登录状态 ----------------
+    // token 存在 localStorage：刷新页面、关闭浏览器后依然保持登录
+    const token = localStorage.getItem('jarvis_token');
+    if (!token) location.replace('/login.html');
+
+    function logout() {
+        localStorage.removeItem('jarvis_token');
+        localStorage.removeItem('jarvis_user');
+        location.replace('/login.html');
+    }
+
+    /** 所有接口请求都走这里：自动带上 token；收到 401 说明 token 失效，回到登录页 */
+    async function api(url, options = {}) {
+        const headers = { ...(options.headers || {}), 'Authorization': 'Bearer ' + token };
+        const resp = await fetch(url, { ...options, headers });
+        if (resp.status === 401) {
+            logout();
+            throw new Error('登录已过期');
+        }
+        return resp;
+    }
+
     const messagesEl = document.getElementById('messages');
     const scroller = document.getElementById('scroller');
     const input = document.getElementById('input');
@@ -224,7 +261,7 @@
     // ---------------- 会话列表 ----------------
 
     async function loadConversations() {
-        const resp = await fetch('/api/conversations');
+        const resp = await api('/api/conversations');
         if (!resp.ok) return;
         conversations = await resp.json();
         renderConversations();
@@ -268,7 +305,7 @@
     async function openConversation(c) {
         if (busy) return;
         aside.classList.remove('open');
-        const resp = await fetch('/api/conversations/' + c.id + '/messages');
+        const resp = await api('/api/conversations/' + c.id + '/messages');
         if (!resp.ok) { await loadConversations(); return; }
         const messages = await resp.json();
 
@@ -299,7 +336,7 @@
             finished = true;
             const newTitle = editor.value.trim();
             if (save && newTitle && newTitle !== c.title) {
-                await fetch('/api/conversations/' + c.id, {
+                await api('/api/conversations/' + c.id, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ title: newTitle })
@@ -317,7 +354,7 @@
 
     async function deleteConversation(c) {
         if (busy || !confirm('删除会话「' + c.title + '」？')) return;
-        await fetch('/api/conversations/' + c.id, { method: 'DELETE' });
+        await api('/api/conversations/' + c.id, { method: 'DELETE' });
         if (c.id === conversationId) newChat();
         await loadConversations();
     }
@@ -392,7 +429,7 @@
         bubble.classList.add('cursor');
 
         try {
-            const resp = await fetch('/api/chat/stream', {
+            const resp = await api('/api/chat/stream', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ conversationId, message: text })
@@ -469,7 +506,22 @@
     document.getElementById('new-chat').addEventListener('click', newChat);
     document.getElementById('toggle-aside').addEventListener('click', () => aside.classList.toggle('open'));
 
-    loadConversations();
+    document.getElementById('logout').addEventListener('click', logout);
+
+    // 显示当前用户；同时验证 token 是否仍然有效（无效时 api() 会跳回登录页）
+    async function loadMe() {
+        const resp = await api('/api/auth/me');
+        if (resp.ok) {
+            const user = await resp.json();
+            document.getElementById('user-name').textContent = user.nickname || user.username;
+        }
+    }
+
+    if (token) {
+        // token 失效时 api() 会跳转登录页并抛出异常，这里忽略即可
+        loadMe().catch(() => {});
+        loadConversations().catch(() => {});
+    }
 </script>
 </body>
 </html>

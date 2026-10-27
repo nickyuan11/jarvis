@@ -22,6 +22,7 @@
         <java.version>21</java.version>
         <mybatis-plus.version>3.5.17</mybatis-plus.version>
         <spring-ai.version>2.0.2</spring-ai.version>
+        <jjwt.version>0.13.0</jjwt.version>
     </properties>
 
     <!-- 导入 Spring AI 的 BOM：统一管理所有 Spring AI 模块的版本 -->
@@ -42,6 +43,31 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- Spring Security：认证（你是谁）和授权（你能做什么），还提供 BCrypt 密码加密 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+
+        <!-- JJWT：生成和校验 JWT。api 编译时用，impl 和 gson（JSON 序列化）运行时才需要 -->
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-api</artifactId>
+            <version>${jjwt.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-impl</artifactId>
+            <version>${jjwt.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-gson</artifactId>
+            <version>${jjwt.version}</version>
+            <scope>runtime</scope>
         </dependency>
 
         <!-- Spring AI 的 DeepSeek 接入：自动配置好 ChatModel 和 ChatClient.Builder -->
