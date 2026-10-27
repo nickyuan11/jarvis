@@ -25,6 +25,7 @@ import com.nick.jarvis.entity.Conversation;
 import com.nick.jarvis.entity.Message;
 import com.nick.jarvis.mapper.ConversationMapper;
 import com.nick.jarvis.mapper.MessageMapper;
+import com.nick.jarvis.security.CurrentUser;
 
 import reactor.core.publisher.Flux;
 import reactor.core.scheduler.Schedulers;
@@ -42,9 +43,6 @@ import reactor.core.scheduler.Schedulers;
 public class ChatService {
 
     private static final Logger log = LoggerFactory.getLogger(ChatService.class);
-
-    /** 还没有做登录，先用一个固定的用户 id，第 2 周接入登录后替换 */
-    private static final Long TEMP_USER_ID = 1L;
 
     private final ChatClient chatClient;
     private final ConversationMapper conversationMapper;
@@ -166,13 +164,13 @@ public class ChatService {
     private Conversation findOrCreateConversation(Long conversationId, String firstMessage) {
         if (conversationId != null) {
             Conversation existing = conversationMapper.selectById(conversationId);
-            if (existing == null || !TEMP_USER_ID.equals(existing.getUserId())) {
+            if (existing == null || !CurrentUser.id().equals(existing.getUserId())) {
                 throw new ResponseStatusException(HttpStatus.NOT_FOUND, "会话不存在");
             }
             return existing;
         }
         Conversation conversation = new Conversation();
-        conversation.setUserId(TEMP_USER_ID);
+        conversation.setUserId(CurrentUser.id());
         // 用第一句话的前 20 个字当标题，以后可以改成让 AI 自动总结标题
         String title = firstMessage.strip();
         conversation.setTitle(title.length() > 20 ? title.substring(0, 20) + "…" : title);

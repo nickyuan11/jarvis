@@ -38,7 +38,47 @@
             color: var(--text);
             font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
             display: flex;
+        }
+        /* ---------- 左侧会话栏 ---------- */
+        aside {
+            width: 260px;
+            flex-shrink: 0;
+            background: var(--panel);
+            border-right: 1px solid var(--line);
+            display: flex;
             flex-direction: column;
+        }
+        .aside-head { padding: 14px; border-bottom: 1px solid var(--line); }
+        .aside-head button { width: 100%; }
+        #conv-list { list-style: none; margin: 0; padding: 8px; overflow-y: auto; flex: 1; }
+        #conv-list li {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 8px 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        #conv-list li:hover { background: var(--bg); }
+        #conv-list li.active { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+        #conv-list .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        #conv-list .ops { display: none; gap: 2px; }
+        #conv-list li:hover .ops, #conv-list li.active .ops { display: flex; }
+        #conv-list .ops button { border: none; padding: 2px 6px; color: var(--muted); font-size: 13px; }
+        #conv-list .ops button:hover { color: var(--text); }
+        #conv-list input {
+            flex: 1; min-width: 0; font: inherit; color: var(--text);
+            background: var(--bg); border: 1px solid var(--accent); border-radius: 6px; padding: 2px 6px;
+        }
+        .conv-empty { color: var(--muted); font-size: 13px; padding: 10px; }
+        /* ---------- 右侧聊天区 ---------- */
+        .chat { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+        #toggle-aside { display: none; }
+        @media (max-width: 720px) {
+            aside { position: fixed; inset: 0 auto 0 0; z-index: 10; transform: translateX(-100%); transition: transform .2s; }
+            aside.open { transform: none; box-shadow: 0 0 40px rgba(0,0,0,.25); }
+            #toggle-aside { display: inline-block; }
         }
         header {
             display: flex;
@@ -135,13 +175,19 @@
     </style>
 </head>
 <body>
+<aside id="aside">
+    <div class="aside-head"><button id="new-chat" type="button">＋ 新对话</button></div>
+    <ul id="conv-list"></ul>
+</aside>
+
+<div class="chat">
 <header>
     <div class="brand">
+        <button id="toggle-aside" type="button">☰</button>
         <div class="dot"></div>
         <h1>JARVIS</h1>
         <span id="conv-label">新对话</span>
     </div>
-    <button id="new-chat" type="button">新对话</button>
 </header>
 
 <main id="scroller">
@@ -157,6 +203,7 @@
     </form>
     <div class="hint">Enter 发送，Shift + Enter 换行</div>
 </footer>
+</div>
 
 <script>
     const messagesEl = document.getElementById('messages');
@@ -165,9 +212,127 @@
     const sendBtn = document.getElementById('send');
     const convLabel = document.getElementById('conv-label');
 
+    const convList = document.getElementById('conv-list');
+    const aside = document.getElementById('aside');
+    const EMPTY_HTML = '<div class="empty" id="empty">你好，我是 Jarvis。<br>有什么可以帮你的？</div>';
+
     // 当前会话 id：第一次发消息时为空，由后端的 meta 事件告诉我们
     let conversationId = null;
+    let conversations = [];
     let busy = false;
+
+    // ---------------- 会话列表 ----------------
+
+    async function loadConversations() {
+        const resp = await fetch('/api/conversations');
+        if (!resp.ok) return;
+        conversations = await resp.json();
+        renderConversations();
+    }
+
+    function renderConversations() {
+        convList.innerHTML = '';
+        if (!conversations.length) {
+            convList.innerHTML = '<div class="conv-empty">还没有会话</div>';
+            return;
+        }
+        for (const c of conversations) {
+            const li = document.createElement('li');
+            li.className = c.id === conversationId ? 'active' : '';
+            li.title = c.title;
+
+            const title = document.createElement('span');
+            title.className = 'title';
+            title.textContent = c.title;
+
+            const ops = document.createElement('span');
+            ops.className = 'ops';
+            const renameBtn = document.createElement('button');
+            renameBtn.type = 'button';
+            renameBtn.textContent = '✎';
+            renameBtn.title = '重命名';
+            const deleteBtn = document.createElement('button');
+            deleteBtn.type = 'button';
+            deleteBtn.textContent = '✕';
+            deleteBtn.title = '删除';
+            ops.append(renameBtn, deleteBtn);
+
+            li.append(title, ops);
+            li.addEventListener('click', () => openConversation(c));
+            renameBtn.addEventListener('click', (e) => { e.stopPropagation(); startRename(li, c); });
+            deleteBtn.addEventListener('click', (e) => { e.stopPropagation(); deleteConversation(c); });
+            convList.appendChild(li);
+        }
+    }
+
+    async function openConversation(c) {
+        if (busy) return;
+        aside.classList.remove('open');
+        const resp = await fetch('/api/conversations/' + c.id + '/messages');
+        if (!resp.ok) { await loadConversations(); return; }
+        const messages = await resp.json();
+
+        conversationId = c.id;
+        convLabel.textContent = c.title;
+        messagesEl.innerHTML = messages.length ? '' : EMPTY_HTML;
+        for (const m of messages) {
+            if (m.role === 'user' || m.role === 'assistant') addMessage(m.role, m.content);
+        }
+        renderConversations();
+        input.focus();
+    }
+
+    /** 把标题换成输入框，回车保存，Esc 取消 */
+    function startRename(li, c) {
+        const titleEl = li.querySelector('.title');
+        const editor = document.createElement('input');
+        editor.value = c.title;
+        titleEl.replaceWith(editor);
+        li.querySelector('.ops').style.display = 'none';
+        editor.focus();
+        editor.select();
+        editor.addEventListener('click', (e) => e.stopPropagation());
+
+        let finished = false;
+        const finish = async (save) => {
+            if (finished) return;
+            finished = true;
+            const newTitle = editor.value.trim();
+            if (save && newTitle && newTitle !== c.title) {
+                await fetch('/api/conversations/' + c.id, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title: newTitle })
+                });
+                if (c.id === conversationId) convLabel.textContent = newTitle;
+            }
+            await loadConversations();
+        };
+        editor.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.isComposing) finish(true);
+            else if (e.key === 'Escape') finish(false);
+        });
+        editor.addEventListener('blur', () => finish(true));
+    }
+
+    async function deleteConversation(c) {
+        if (busy || !confirm('删除会话「' + c.title + '」？')) return;
+        await fetch('/api/conversations/' + c.id, { method: 'DELETE' });
+        if (c.id === conversationId) newChat();
+        await loadConversations();
+    }
+
+    function newChat() {
+        if (busy) return;
+        conversationId = null;
+        convLabel.textContent = '新对话';
+        messagesEl.innerHTML = EMPTY_HTML;
+        renderConversations();
+        aside.classList.remove('open');
+        input.focus();
+    }
+
+    // ---------------- 聊天 ----------------
 
     /** 在页面上添加一条消息，返回气泡元素，方便流式过程中不断追加文字 */
     function addMessage(role, text) {
@@ -248,7 +413,6 @@
                 for (const ev of parsed.events) {
                     if (ev.name === 'meta') {
                         conversationId = ev.data.conversationId;
-                        convLabel.textContent = '会话 #' + conversationId;
                     } else if (ev.name === 'delta') {
                         bubble.textContent += ev.data.text;
                         scrollToBottom();
@@ -272,6 +436,10 @@
             busy = false;
             sendBtn.disabled = false;
             input.focus();
+            // 新会话出现在列表里，聊过的会话排到最前面
+            await loadConversations();
+            const current = conversations.find(c => c.id === conversationId);
+            if (current) convLabel.textContent = current.title;
         }
     }
 
@@ -298,13 +466,10 @@
     }
     input.addEventListener('input', autoResize);
 
-    document.getElementById('new-chat').addEventListener('click', () => {
-        if (busy) return;
-        conversationId = null;
-        convLabel.textContent = '新对话';
-        messagesEl.innerHTML = '<div class="empty" id="empty">你好，我是 Jarvis。<br>有什么可以帮你的？</div>';
-        input.focus();
-    });
+    document.getElementById('new-chat').addEventListener('click', newChat);
+    document.getElementById('toggle-aside').addEventListener('click', () => aside.classList.toggle('open'));
+
+    loadConversations();
 </script>
 </body>
 </html>
