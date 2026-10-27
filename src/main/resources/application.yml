@@ -4,6 +4,10 @@ server:
 spring:
   application:
     name: jarvis
+  mvc:
+    async:
+      # 流式接口是异步请求，给足时间，避免长回复被中途断开
+      request-timeout: 180s
   # 读取本地私密配置（密码、API Key），这个文件已被 .gitignore 忽略
   config:
     import: optional:classpath:application-local.yml

@@ -3,7 +3,10 @@ package com.nick.jarvis.service;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.UserMessage;
@@ -11,15 +14,20 @@ import org.springframework.ai.chat.metadata.Usage;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.nick.jarvis.dto.ChatEvent;
 import com.nick.jarvis.dto.ChatReply;
 import com.nick.jarvis.entity.Conversation;
 import com.nick.jarvis.entity.Message;
 import com.nick.jarvis.mapper.ConversationMapper;
 import com.nick.jarvis.mapper.MessageMapper;
+
+import reactor.core.publisher.Flux;
+import reactor.core.scheduler.Schedulers;
 
 /**
  * 聊天的核心流程：
@@ -27,9 +35,13 @@ import com.nick.jarvis.mapper.MessageMapper;
  * 2. 保存用户消息
  * 3. 取出最近的历史消息，连同系统提示词一起发给大模型
  * 4. 保存大模型的回复，以及 token 用量
+ *
+ * chat() 是一次性返回，streamChat() 是边生成边推送。前三步两者共用。
  */
 @Service
 public class ChatService {
+
+    private static final Logger log = LoggerFactory.getLogger(ChatService.class);
 
     /** 还没有做登录，先用一个固定的用户 id，第 2 周接入登录后替换 */
     private static final Long TEMP_USER_ID = 1L;
@@ -51,18 +63,13 @@ public class ChatService {
         this.historySize = historySize;
     }
 
+    /** 一次性返回完整回复 */
     public ChatReply chat(Long conversationId, String userText) {
-        if (userText == null || userText.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "message 不能为空");
-        }
-
-        Conversation conversation = findOrCreateConversation(conversationId, userText);
-        saveMessage(conversation.getId(), Message.ROLE_USER, userText, null, null, null);
+        Prepared prepared = prepare(conversationId, userText);
 
         // 注意：调用大模型可能要好几秒，所以不要把它放在数据库事务里，否则会长时间占用数据库连接
-        List<org.springframework.ai.chat.messages.Message> history = loadHistory(conversation.getId());
         ChatResponse response = chatClient.prompt()
-                .messages(history)
+                .messages(prepared.history())
                 .call()
                 .chatResponse();
 
@@ -72,10 +79,88 @@ public class ChatService {
         Integer promptTokens = usage == null ? null : usage.getPromptTokens();
         Integer completionTokens = usage == null ? null : usage.getCompletionTokens();
 
-        saveMessage(conversation.getId(), Message.ROLE_ASSISTANT, replyText, model, promptTokens, completionTokens);
-        touchConversation(conversation.getId());
+        saveAssistantReply(prepared.conversationId(), replyText, model, promptTokens, completionTokens);
+        return new ChatReply(prepared.conversationId(), replyText, model, promptTokens, completionTokens);
+    }
 
-        return new ChatReply(conversation.getId(), replyText, model, promptTokens, completionTokens);
+    /**
+     * 流式返回：模型每生成一小段，就立刻推给前端。
+     * 返回的 Flux 是“一串将来会陆续到达的事件”，Spring MVC 会把它按 SSE 格式写回给浏览器。
+     */
+    public Flux<ServerSentEvent<Object>> streamChat(Long conversationId, String userText) {
+        // 准备工作（查库、存用户消息）是同步执行的，出错会直接返回 400/404，不会进入流
+        Prepared prepared = prepare(conversationId, userText);
+        Long convId = prepared.conversationId();
+
+        // 用来在流的过程中累积完整回复和最后的元数据
+        StringBuilder fullText = new StringBuilder();
+        AtomicReference<String> model = new AtomicReference<>();
+        AtomicReference<Usage> usage = new AtomicReference<>();
+
+        Flux<ServerSentEvent<Object>> deltas = chatClient.prompt()
+                .messages(prepared.history())
+                .stream()
+                .chatResponse()
+                // 下面的回调里有数据库操作（阻塞），切到专门处理阻塞任务的线程池上执行
+                .publishOn(Schedulers.boundedElastic())
+                .doOnNext(chunk -> {
+                    // 模型名和 token 用量通常只出现在最后一个分块里，见到就记下来
+                    if (chunk.getMetadata() != null) {
+                        if (chunk.getMetadata().getModel() != null) {
+                            model.set(chunk.getMetadata().getModel());
+                        }
+                        Usage u = chunk.getMetadata().getUsage();
+                        if (u != null && u.getTotalTokens() != null && u.getTotalTokens() > 0) {
+                            usage.set(u);
+                        }
+                    }
+                })
+                .map(this::textOf)
+                .filter(text -> !text.isEmpty())
+                .doOnNext(fullText::append)
+                .map(text -> event("delta", new ChatEvent.Delta(text)));
+
+        Flux<ServerSentEvent<Object>> done = Flux.defer(() -> {
+            Usage u = usage.get();
+            Integer promptTokens = u == null ? null : u.getPromptTokens();
+            Integer completionTokens = u == null ? null : u.getCompletionTokens();
+            saveAssistantReply(convId, fullText.toString(), model.get(), promptTokens, completionTokens);
+            return Flux.just(event("done", new ChatEvent.Done(model.get(), promptTokens, completionTokens)));
+        });
+
+        return Flux.concat(
+                        Flux.just(event("meta", new ChatEvent.Meta(convId))),
+                        deltas,
+                        done)
+                // 用户中途关闭页面：把已经生成的部分保存下来，避免对话记录缺一截
+                .doOnCancel(() -> {
+                    if (!fullText.isEmpty()) {
+                        log.info("Stream cancelled by client, saving partial reply, conversationId={}", convId);
+                        saveAssistantReply(convId, fullText.toString(), model.get(), null, null);
+                    }
+                })
+                // 模型调用失败：不让异常直接断开连接，而是推一个 error 事件给前端展示
+                .onErrorResume(e -> {
+                    log.error("Stream chat failed, conversationId={}", convId, e);
+                    return Flux.just(event("error", new ChatEvent.Error("Jarvis 暂时无法回复，请稍后再试")));
+                });
+    }
+
+    // ------------------------------------------------------------------
+    // 以下是两种方式共用的步骤
+    // ------------------------------------------------------------------
+
+    /** 前三步的结果：会话 id + 准备发给模型的历史消息 */
+    private record Prepared(Long conversationId, List<org.springframework.ai.chat.messages.Message> history) {
+    }
+
+    private Prepared prepare(Long conversationId, String userText) {
+        if (userText == null || userText.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "message 不能为空");
+        }
+        Conversation conversation = findOrCreateConversation(conversationId, userText);
+        saveMessage(conversation.getId(), Message.ROLE_USER, userText, null, null, null);
+        return new Prepared(conversation.getId(), loadHistory(conversation.getId()));
     }
 
     private Conversation findOrCreateConversation(Long conversationId, String firstMessage) {
@@ -117,6 +202,12 @@ public class ChatService {
         return history;
     }
 
+    private void saveAssistantReply(Long conversationId, String text, String model,
+                                    Integer promptTokens, Integer completionTokens) {
+        saveMessage(conversationId, Message.ROLE_ASSISTANT, text, model, promptTokens, completionTokens);
+        touchConversation(conversationId);
+    }
+
     private void saveMessage(Long conversationId, String role, String content,
                              String model, Integer promptTokens, Integer completionTokens) {
         Message message = new Message();
@@ -134,5 +225,18 @@ public class ChatService {
         Conversation update = new Conversation();
         update.setId(conversationId);
         conversationMapper.updateById(update);
+    }
+
+    /** 从一个流式分块里取出文字，可能为空（比如最后只带用量信息的分块） */
+    private String textOf(ChatResponse chunk) {
+        if (chunk.getResult() == null || chunk.getResult().getOutput() == null) {
+            return "";
+        }
+        String text = chunk.getResult().getOutput().getText();
+        return text == null ? "" : text;
+    }
+
+    private static ServerSentEvent<Object> event(String name, Object data) {
+        return ServerSentEvent.builder(data).event(name).build();
     }
 }
