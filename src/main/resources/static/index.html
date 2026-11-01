@@ -182,10 +182,24 @@
         textarea:focus { outline: 2px solid color-mix(in srgb, var(--accent) 40%, transparent); border-color: var(--accent); }
         #send { background: var(--accent); color: #fff; border-color: var(--accent); padding: 10px 18px; }
         #send:disabled { opacity: 0.5; cursor: not-allowed; }
+        /* ---------- 提醒弹窗 ---------- */
+        #toasts {
+            position: fixed; top: 16px; right: 16px; z-index: 20;
+            display: flex; flex-direction: column; gap: 10px; max-width: min(360px, calc(100vw - 32px));
+        }
+        .toast {
+            background: var(--panel); border: 1px solid var(--accent); border-left-width: 4px;
+            border-radius: 10px; padding: 12px 14px; box-shadow: 0 8px 24px rgba(0,0,0,.12);
+            display: flex; gap: 10px; align-items: flex-start; animation: slide-in .2s ease-out;
+        }
+        .toast span { flex: 1; line-height: 1.5; word-break: break-word; }
+        .toast button { border: none; padding: 0 4px; color: var(--muted); }
+        @keyframes slide-in { from { transform: translateY(-8px); opacity: 0; } }
         .hint { max-width: 760px; margin: 6px auto 0; font-size: 12px; color: var(--muted); }
     </style>
 </head>
 <body>
+<div id="toasts" aria-live="polite"></div>
 <aside id="aside">
     <div class="aside-head"><button id="new-chat" type="button">＋ 新对话</button></div>
     <ul id="conv-list"></ul>
@@ -522,6 +536,54 @@
 
     document.getElementById('logout').addEventListener('click', logout);
 
+    // ---------------- 提醒通知 ----------------
+    // 每 30 秒问一次服务器有没有新通知（轮询）。实现简单，代价是最多延迟 30 秒；
+    // 想要实时推送可以换成 SSE 或 WebSocket 长连接。
+
+    function showToast(text) {
+        const box = document.createElement('div');
+        box.className = 'toast';
+        const span = document.createElement('span');
+        span.textContent = text;
+        const close = document.createElement('button');
+        close.type = 'button';
+        close.textContent = '✕';
+        close.title = '关闭';
+        close.addEventListener('click', () => box.remove());
+        box.append(span, close);
+        document.getElementById('toasts').appendChild(box);
+    }
+
+    async function pollNotifications() {
+        try {
+            const resp = await api('/api/notifications/unread');
+            if (!resp.ok) return;
+            const list = await resp.json();
+            if (!list.length) return;
+            for (const n of list) {
+                showToast(n.content);
+                // 页面不在前台时，用系统通知提醒（需要用户授权过）
+                if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
+                    new Notification('Jarvis', { body: n.content });
+                }
+            }
+            await api('/api/notifications/read', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids: list.map(n => n.id) })
+            });
+        } catch (e) {
+            // 网络抖动时忽略，下一轮再试
+        }
+    }
+
+    // 浏览器只允许在用户操作时申请通知权限，所以在第一次发送消息时顺便申请
+    document.getElementById('form').addEventListener('submit', () => {
+        if ('Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+    }, { once: true });
+
     // 显示当前用户；同时验证 token 是否仍然有效（无效时 api() 会跳回登录页）
     async function loadMe() {
         const resp = await api('/api/auth/me');
@@ -535,6 +597,8 @@
         // token 失效时 api() 会跳转登录页并抛出异常，这里忽略即可
         loadMe().catch(() => {});
         loadConversations().catch(() => {});
+        pollNotifications();
+        setInterval(pollNotifications, 30_000);
     }
 </script>
 </body>

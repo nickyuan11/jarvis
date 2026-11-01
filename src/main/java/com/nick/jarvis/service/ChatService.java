@@ -2,7 +2,11 @@ package com.nick.jarvis.service;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.time.format.DateTimeFormatter;
+import java.time.format.TextStyle;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.slf4j.Logger;
@@ -27,6 +31,10 @@ import com.nick.jarvis.mapper.ConversationMapper;
 import com.nick.jarvis.mapper.MessageMapper;
 import com.nick.jarvis.ratelimit.RateLimiter;
 import com.nick.jarvis.security.CurrentUser;
+import com.nick.jarvis.support.JarvisTime;
+import com.nick.jarvis.tools.NbaTools;
+import com.nick.jarvis.tools.ReminderTools;
+import com.nick.jarvis.tools.ToolContextKeys;
 
 import reactor.core.publisher.Flux;
 import reactor.core.scheduler.Schedulers;
@@ -44,25 +52,52 @@ import reactor.core.scheduler.Schedulers;
 public class ChatService {
 
     private static final Logger log = LoggerFactory.getLogger(ChatService.class);
+    private static final DateTimeFormatter SENT_AT = DateTimeFormatter.ofPattern("MM-dd HH:mm");
 
     private final ChatClient chatClient;
     private final ConversationMapper conversationMapper;
     private final MessageMapper messageMapper;
     private final RateLimiter rateLimiter;
+    private final JarvisTime time;
+    private final String systemPrompt;
     private final int historySize;
+    /** 交给大模型的工具 */
+    private final Object[] tools;
 
     public ChatService(ChatClient.Builder chatClientBuilder,
                        ConversationMapper conversationMapper,
                        MessageMapper messageMapper,
                        RateLimiter rateLimiter,
+                       JarvisTime time,
+                       ReminderTools reminderTools,
+                       NbaTools nbaTools,
                        @Value("${jarvis.chat.system-prompt}") String systemPrompt,
                        @Value("${jarvis.chat.history-size:20}") int historySize) {
-        // 系统提示词作为默认设置，每次请求都会自动带上
-        this.chatClient = chatClientBuilder.defaultSystem(systemPrompt).build();
+        this.chatClient = chatClientBuilder.build();
         this.conversationMapper = conversationMapper;
         this.messageMapper = messageMapper;
         this.rateLimiter = rateLimiter;
+        this.time = time;
+        this.systemPrompt = systemPrompt;
         this.historySize = historySize;
+        this.tools = new Object[] {reminderTools, nbaTools};
+    }
+
+    /**
+     * 每次请求都准备一个新的 prompt：
+     * - 系统提示词里带上当前时间。大模型不知道“现在”是什么时候，不告诉它，它就没法把“明天下午”换算成具体日期；
+     * - 注册工具，并通过 toolContext 把当前用户 id 传给工具。
+     */
+    private ChatClient.ChatClientRequestSpec newPrompt(Prepared prepared) {
+        var now = time.zonedNow();
+        String timeLine = "\n当前时间：" + now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
+                + "，" + now.getDayOfWeek().getDisplayName(TextStyle.FULL, Locale.CHINA)
+                + "（" + time.zone() + "）";
+        return chatClient.prompt()
+                .system(systemPrompt + timeLine)
+                .messages(prepared.history())
+                .tools(tools)
+                .toolContext(Map.of(ToolContextKeys.USER_ID, prepared.userId()));
     }
 
     /** 一次性返回完整回复 */
@@ -70,8 +105,7 @@ public class ChatService {
         Prepared prepared = prepare(conversationId, userText);
 
         // 注意：调用大模型可能要好几秒，所以不要把它放在数据库事务里，否则会长时间占用数据库连接
-        ChatResponse response = chatClient.prompt()
-                .messages(prepared.history())
+        ChatResponse response = newPrompt(prepared)
                 .call()
                 .chatResponse();
 
@@ -99,8 +133,7 @@ public class ChatService {
         AtomicReference<String> model = new AtomicReference<>();
         AtomicReference<Usage> usage = new AtomicReference<>();
 
-        Flux<ServerSentEvent<Object>> deltas = chatClient.prompt()
-                .messages(prepared.history())
+        Flux<ServerSentEvent<Object>> deltas = newPrompt(prepared)
                 .stream()
                 .chatResponse()
                 // 下面的回调里有数据库操作（阻塞），切到专门处理阻塞任务的线程池上执行
@@ -152,8 +185,9 @@ public class ChatService {
     // 以下是两种方式共用的步骤
     // ------------------------------------------------------------------
 
-    /** 前三步的结果：会话 id + 准备发给模型的历史消息 */
-    private record Prepared(Long conversationId, List<org.springframework.ai.chat.messages.Message> history) {
+    /** 前三步的结果：会话 id、当前用户 id、准备发给模型的历史消息 */
+    private record Prepared(Long conversationId, Long userId,
+                            List<org.springframework.ai.chat.messages.Message> history) {
     }
 
     private Prepared prepare(Long conversationId, String userText) {
@@ -164,7 +198,7 @@ public class ChatService {
         rateLimiter.check(CurrentUser.id());
         Conversation conversation = findOrCreateConversation(conversationId, userText);
         saveMessage(conversation.getId(), Message.ROLE_USER, userText, null, null, null);
-        return new Prepared(conversation.getId(), loadHistory(conversation.getId()));
+        return new Prepared(conversation.getId(), CurrentUser.id(), loadHistory(conversation.getId()));
     }
 
     private Conversation findOrCreateConversation(Long conversationId, String firstMessage) {
@@ -198,12 +232,18 @@ public class ChatService {
         List<org.springframework.ai.chat.messages.Message> history = new ArrayList<>();
         for (Message m : recent) {
             if (Message.ROLE_USER.equals(m.getRole())) {
-                history.add(new UserMessage(m.getContent()));
+                // 给用户消息加上发送时间（只在发给模型时加，数据库里的内容不变），
+                // 让模型知道对话之间隔了多久，比如“设提醒”是几分钟前的事，而不是刚刚
+                history.add(new UserMessage(sentAt(m) + m.getContent()));
             } else if (Message.ROLE_ASSISTANT.equals(m.getRole())) {
                 history.add(new AssistantMessage(m.getContent()));
             }
         }
         return history;
+    }
+
+    private static String sentAt(Message m) {
+        return m.getCreateTime() == null ? "" : "（发送于 " + m.getCreateTime().format(SENT_AT) + "）";
     }
 
     private void saveAssistantReply(Long conversationId, String text, String model,

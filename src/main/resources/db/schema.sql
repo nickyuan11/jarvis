@@ -36,3 +36,32 @@ CREATE TABLE IF NOT EXISTS `message` (
     PRIMARY KEY (`id`),
     KEY `idx_conversation_id` (`conversation_id`, `id`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '消息';
+
+-- ---------------------------------------------------------------------
+-- 第 3 周：提醒事项、通知
+-- ---------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS `reminder` (
+    `id`          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `user_id`     BIGINT       NOT NULL COMMENT '所属用户',
+    `content`     VARCHAR(500) NOT NULL COMMENT '提醒内容',
+    `remind_at`   DATETIME     NOT NULL COMMENT '下一次提醒时间；循环提醒每次触发后往后推',
+    `repeat_type` VARCHAR(20)  NOT NULL DEFAULT 'NONE' COMMENT '重复方式：NONE / DAILY / WEEKLY / MONTHLY',
+    `status`      VARCHAR(20)  NOT NULL DEFAULT 'PENDING' COMMENT '状态：PENDING 待提醒 / DONE 已提醒 / CANCELLED 已取消',
+    `create_time` DATETIME     NOT NULL COMMENT '创建时间',
+    `update_time` DATETIME     NOT NULL COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    -- 定时任务每 30 秒查一次“到期的待提醒记录”，靠这个索引避免全表扫描
+    KEY `idx_status_remind_at` (`status`, `remind_at`),
+    KEY `idx_user_status` (`user_id`, `status`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '提醒事项';
+
+CREATE TABLE IF NOT EXISTS `notification` (
+    `id`          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `user_id`     BIGINT       NOT NULL COMMENT '接收用户',
+    `content`     VARCHAR(500) NOT NULL COMMENT '通知内容',
+    `read_at`     DATETIME     DEFAULT NULL COMMENT '已读时间，NULL 表示未读',
+    `create_time` DATETIME     NOT NULL COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_user_read` (`user_id`, `read_at`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '站内通知';
