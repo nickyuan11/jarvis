@@ -16,17 +16,20 @@ import jakarta.servlet.http.HttpServletResponse;
 /**
  * 每个请求进来时，检查请求头里的 token：
  *   Authorization: Bearer xxxxx
- * 有效就把用户 id 放进 SecurityContext，后面的代码通过 CurrentUser.id() 取出来。
- * 无效或没有 token 时什么都不做，交给 SecurityConfig 的规则决定是否放行。
+ * 签名有效、没过期、也不在黑名单里，就把用户 id 放进 SecurityContext，
+ * 后面的代码通过 CurrentUser.id() 取出来。
+ * 否则什么都不做，交给 SecurityConfig 的规则决定是否放行。
  */
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private static final String PREFIX = "Bearer ";
 
     private final JwtService jwtService;
+    private final TokenBlacklist blacklist;
 
-    public JwtAuthenticationFilter(JwtService jwtService) {
+    public JwtAuthenticationFilter(JwtService jwtService, TokenBlacklist blacklist) {
         this.jwtService = jwtService;
+        this.blacklist = blacklist;
     }
 
     @Override
@@ -34,9 +37,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         String header = request.getHeader(HttpHeaders.AUTHORIZATION);
         if (header != null && header.startsWith(PREFIX)) {
-            Long userId = jwtService.parseUserId(header.substring(PREFIX.length()));
-            if (userId != null) {
-                var authentication = new UsernamePasswordAuthenticationToken(userId, null, List.of());
+            JwtService.ParsedToken token = jwtService.parse(header.substring(PREFIX.length()));
+            if (token != null && !blacklist.isRevoked(token.jti())) {
+                var authentication = new UsernamePasswordAuthenticationToken(token.userId(), null, List.of());
+                // 把解析后的 token 也带上，退出登录时要用到它的 jti 和过期时间
+                authentication.setDetails(token);
                 SecurityContextHolder.getContext().setAuthentication(authentication);
             }
         }

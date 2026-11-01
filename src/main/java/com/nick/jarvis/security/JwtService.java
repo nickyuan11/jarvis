@@ -2,6 +2,7 @@ package com.nick.jarvis.security;
 
 import java.time.Instant;
 import java.util.Date;
+import java.util.UUID;
 
 import javax.crypto.SecretKey;
 
@@ -43,6 +44,8 @@ public class JwtService {
         Instant now = Instant.now();
         Instant expiresAt = now.plus(properties.expiration());
         String token = Jwts.builder()
+                // jti：每个 token 的唯一编号。退出登录时，把这个编号加入黑名单
+                .id(UUID.randomUUID().toString())
                 .subject(String.valueOf(userId))
                 .claim("username", username)
                 .issuedAt(Date.from(now))
@@ -53,21 +56,28 @@ public class JwtService {
     }
 
     /**
-     * 校验签名和有效期，通过后返回用户 id；token 无效时返回 null。
+     * 校验签名和有效期，通过后返回 token 里的信息；token 无效时返回 null。
      */
-    public Long parseUserId(String token) {
+    public ParsedToken parse(String token) {
         try {
             Claims claims = Jwts.parser()
                     .verifyWith(key)
                     .build()
                     .parseSignedClaims(token)
                     .getPayload();
-            return Long.valueOf(claims.getSubject());
+            return new ParsedToken(
+                    Long.valueOf(claims.getSubject()),
+                    claims.getId(),
+                    claims.getExpiration().toInstant());
         } catch (JwtException | IllegalArgumentException e) {
             return null;
         }
     }
 
     public record IssuedToken(String token, Instant expiresAt) {
+    }
+
+    /** 解析后的 token：用户 id、唯一编号、过期时间 */
+    public record ParsedToken(Long userId, String jti, Instant expiresAt) {
     }
 }

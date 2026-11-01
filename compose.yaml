@@ -1,0 +1,17 @@
+# 本地开发用到的中间件。在项目根目录运行：
+#   docker compose up -d     启动
+#   docker compose down      停止（数据保留在 volume 里）
+services:
+  redis:
+    image: redis:7
+    container_name: jarvis-redis
+    ports:
+      - "6379:6379"
+    # 开启 AOF 持久化：容器重启后，黑名单等数据不会丢
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+volumes:
+  redis-data:

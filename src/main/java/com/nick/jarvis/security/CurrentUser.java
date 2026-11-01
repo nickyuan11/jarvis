@@ -22,4 +22,13 @@ public final class CurrentUser {
         }
         throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "请先登录");
     }
+
+    /** 当前请求携带的 token 信息（由 JwtAuthenticationFilter 放入） */
+    public static JwtService.ParsedToken token() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication != null && authentication.getDetails() instanceof JwtService.ParsedToken token) {
+            return token;
+        }
+        throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "请先登录");
+    }
 }

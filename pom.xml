@@ -45,6 +45,12 @@
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
+        <!-- Redis：token 黑名单、接口限流 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
         <!-- Spring Security：认证（你是谁）和授权（你能做什么），还提供 BCrypt 密码加密 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

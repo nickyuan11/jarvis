@@ -15,6 +15,7 @@ import com.nick.jarvis.entity.User;
 import com.nick.jarvis.mapper.UserMapper;
 import com.nick.jarvis.security.CurrentUser;
 import com.nick.jarvis.security.JwtService;
+import com.nick.jarvis.security.TokenBlacklist;
 
 @Service
 public class AuthService {
@@ -26,11 +27,14 @@ public class AuthService {
     private final UserMapper userMapper;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
+    private final TokenBlacklist blacklist;
 
-    public AuthService(UserMapper userMapper, PasswordEncoder passwordEncoder, JwtService jwtService) {
+    public AuthService(UserMapper userMapper, PasswordEncoder passwordEncoder,
+                       JwtService jwtService, TokenBlacklist blacklist) {
         this.userMapper = userMapper;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
+        this.blacklist = blacklist;
     }
 
     public AuthResponse register(String username, String password, String nickname) {
@@ -65,6 +69,11 @@ public class AuthService {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "用户名或密码错误");
         }
         return issueFor(user);
+    }
+
+    /** 退出登录：让当前这个 token 立即失效 */
+    public void logout() {
+        blacklist.revoke(CurrentUser.token());
     }
 
     public UserView me() {

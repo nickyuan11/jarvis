@@ -20,7 +20,8 @@ import jakarta.servlet.DispatcherType;
 public class SecurityConfig {
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http, JwtService jwtService) throws Exception {
+    public SecurityFilterChain securityFilterChain(HttpSecurity http, JwtService jwtService,
+                                                   TokenBlacklist blacklist) throws Exception {
         http
                 // 用 token 认证，不依赖 Cookie，所以不需要 CSRF 防护
                 .csrf(AbstractHttpConfigurer::disable)
@@ -45,7 +46,8 @@ public class SecurityConfig {
                     response.getWriter().write("{\"message\":\"请先登录\"}");
                 }))
                 // 在 Spring Security 默认的用户名密码过滤器之前，先执行我们的 JWT 过滤器
-                .addFilterBefore(new JwtAuthenticationFilter(jwtService), UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(new JwtAuthenticationFilter(jwtService, blacklist),
+                        UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }
 

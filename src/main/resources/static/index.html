@@ -226,10 +226,19 @@
     const token = localStorage.getItem('jarvis_token');
     if (!token) location.replace('/login.html');
 
-    function logout() {
+    function clearLoginAndLeave() {
         localStorage.removeItem('jarvis_token');
         localStorage.removeItem('jarvis_user');
         location.replace('/login.html');
+    }
+
+    /** 主动退出：先通知服务器把 token 拉进黑名单，再清除本地登录状态 */
+    async function logout() {
+        try {
+            await fetch('/api/auth/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } });
+        } finally {
+            clearLoginAndLeave();
+        }
     }
 
     /** 所有接口请求都走这里：自动带上 token；收到 401 说明 token 失效，回到登录页 */
@@ -237,7 +246,8 @@
         const headers = { ...(options.headers || {}), 'Authorization': 'Bearer ' + token };
         const resp = await fetch(url, { ...options, headers });
         if (resp.status === 401) {
-            logout();
+            // token 已经失效了，不需要再通知服务器
+            clearLoginAndLeave();
             throw new Error('登录已过期');
         }
         return resp;
@@ -434,7 +444,11 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ conversationId, message: text })
             });
-            if (!resp.ok) throw new Error('请求失败（HTTP ' + resp.status + '）');
+            if (!resp.ok) {
+                // 比如 429 限流：显示服务器返回的具体原因
+                const data = await resp.json().catch(() => ({}));
+                throw new Error(data.message || ('请求失败（HTTP ' + resp.status + '）'));
+            }
 
             const reader = resp.body.getReader();
             const decoder = new TextDecoder();

@@ -25,6 +25,7 @@ import com.nick.jarvis.entity.Conversation;
 import com.nick.jarvis.entity.Message;
 import com.nick.jarvis.mapper.ConversationMapper;
 import com.nick.jarvis.mapper.MessageMapper;
+import com.nick.jarvis.ratelimit.RateLimiter;
 import com.nick.jarvis.security.CurrentUser;
 
 import reactor.core.publisher.Flux;
@@ -47,17 +48,20 @@ public class ChatService {
     private final ChatClient chatClient;
     private final ConversationMapper conversationMapper;
     private final MessageMapper messageMapper;
+    private final RateLimiter rateLimiter;
     private final int historySize;
 
     public ChatService(ChatClient.Builder chatClientBuilder,
                        ConversationMapper conversationMapper,
                        MessageMapper messageMapper,
+                       RateLimiter rateLimiter,
                        @Value("${jarvis.chat.system-prompt}") String systemPrompt,
                        @Value("${jarvis.chat.history-size:20}") int historySize) {
         // 系统提示词作为默认设置，每次请求都会自动带上
         this.chatClient = chatClientBuilder.defaultSystem(systemPrompt).build();
         this.conversationMapper = conversationMapper;
         this.messageMapper = messageMapper;
+        this.rateLimiter = rateLimiter;
         this.historySize = historySize;
     }
 
@@ -156,6 +160,8 @@ public class ChatService {
         if (userText == null || userText.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "message 不能为空");
         }
+        // 先限流再干活：被拒绝的请求不会写数据库，也不会调用大模型
+        rateLimiter.check(CurrentUser.id());
         Conversation conversation = findOrCreateConversation(conversationId, userText);
         saveMessage(conversation.getId(), Message.ROLE_USER, userText, null, null, null);
         return new Prepared(conversation.getId(), loadHistory(conversation.getId()));
