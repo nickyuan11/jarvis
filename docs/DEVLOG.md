@@ -2,7 +2,7 @@
 
 一个基于 Spring Boot 4 和 Spring AI 的个人 AI 助手。计划的核心功能是网文阅读助手：上传小说后，可以针对内容提问、总结章节、梳理人物关系（RAG）。
 
-## 当前状态（2026-10-27）
+## 当前状态（2026-11-01）
 
 | 模块 | 状态 |
 |---|---|
@@ -10,12 +10,12 @@
 | 流式输出（SSE）+ 聊天网页 | ✅ 完成 |
 | 会话管理（列表、重命名、删除） | ✅ 完成 |
 | 注册登录（Spring Security + JWT） | ✅ 完成 |
-| Redis：退出登录、接口限流 | ⏳ 下一步，等待安装 Docker |
+| Redis：退出登录、接口限流 | ✅ 完成 |
 | 单元测试 | ⏳ 待做 |
 | 网文 RAG（向量检索） | 📅 第 3 周 |
 | 工具调用、Docker 部署 | 📅 第 4 周 |
 
-**技术栈**：Java 21 · Spring Boot 4.0.8 · Spring AI 2.0.2 · Spring Security · JJWT 0.13 · MyBatis-Plus 3.5.17 · MySQL 8 · DeepSeek
+**技术栈**：Java 21 · Spring Boot 4.0.8 · Spring AI 2.0.2 · Spring Security · JJWT 0.13 · MyBatis-Plus 3.5.17 · MySQL 8 · Redis 7 · Docker · DeepSeek
 
 ---
 
@@ -79,21 +79,35 @@
 - **注册接口返回 400 但没有错误原因**：Spring Boot 4 把 `server.error.include-message` 改名为 `spring.web.error.include-message`，旧配置不报错但不生效。教训：升级大版本后，配置不生效要先查迁移说明。
 - **用户名带空格导致注册失败，但提示不清楚**：优化为注册时实时提示规则、提交前前端校验、后端报错写明“不能包含空格、中文”。前端校验只为体验，后端校验才是防线。
 - **新文件漏提交**：IDEA 默认不勾选新文件，用 Amend 合并进上一次未推送的提交。
-- **推送 GitHub 失败**：ExpressVPN 分流没有包含 Git。已把 `git-remote-https.exe` 等加入分流，但网络仍不稳定，本地提交待推送。
+- **推送 GitHub 失败**：ExpressVPN 分流没有包含 Git。把 `git-remote-https.exe` 等加入分流后，网络稳定时推送成功。
 
 **面试题思考：JWT 如何让用户下线**
 - 单个 JWT 签发后无法收回，被偷后在过期前都能用。
 - 方案：双 token（短期 Access + 服务端登记的 Refresh）、token 黑名单、用户版本号。
 - 三种方案都需要在服务端存少量状态，通常放在 Redis（快、支持自动过期）。
 
-**进行中**
-- 安装 Docker Desktop（WSL2 下载较慢，下次继续）。
+## 2026-11-01（周日）：Docker + Redis
+
+**成果**
+- 装好 WSL2 和 Docker Desktop，用 `compose.yaml` 启动 Redis。
+- **真正的退出登录**：新增 `POST /api/auth/logout`。每个 JWT 带唯一编号 `jti`，退出时写入 Redis 黑名单，过期时间等于 token 剩余寿命。用旧 token 访问接口返回 401。
+- **聊天接口限流**：每个用户 60 秒内最多 10 条消息，超出返回 429，前端显示需要等待的秒数。
+
+**设计要点**
+- 限流用 Lua 脚本把 `INCR` 和 `EXPIRE` 合成一个原子操作，避免计数器永不过期、用户被永久限流。
+- 先限流再干活：被拒绝的请求不写数据库，也不调用大模型，不产生费用。
+- 固定窗口限流的缺点：窗口交界处可能在短时间内放过两倍请求。改进方向是滑动窗口或令牌桶。
+- Redis 故障时选择“失败关闭”：黑名单和限流关系到安全和费用，宁可请求失败也不跳过检查；纯体验类功能（如缓存）才适合降级跳过。
+
+**踩过的坑**
+- **WSL 安装失败**：`wsl --install` 默认会下载 Ubuntu，体积大、容易失败。Docker 只需要 WSL 本身，改用 `wsl --install --no-distribution --web-download`。
+- **Docker 新版安装程序不能选目录**：默认装在 `C:\Program Files\Docker\Docker`；镜像数据目录可以在设置里改到 D 盘。
+- **拉取镜像报 `EOF`**：连不上 Docker Hub。镜像下载发生在 WSL 虚拟机里，VPN 按应用分流抓不到这部分流量。临时让所有流量走 VPN，拉完镜像再改回分流。
+- **PowerShell 看不到 401**：`Invoke-RestMethod` 只把错误响应的内容显示成报错，用 `curl.exe -i` 才能看到状态码。
 
 ---
 
 ## 下一步
 
-1. 装好 Docker，用 Docker 启动 Redis。
-2. 用 Redis 实现退出登录（token 黑名单）和接口限流。
-3. 给核心 Service 补单元测试。
-4. 网络稳定时推送积压的本地提交。
+1. 给核心 Service 补单元测试。
+2. 第 3 周：小说上传 + RAG（pgvector）。
