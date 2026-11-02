@@ -6,6 +6,8 @@ CREATE TABLE IF NOT EXISTS `user` (
     `username`    VARCHAR(50)  NOT NULL COMMENT '登录名',
     `password`    VARCHAR(100) NOT NULL COMMENT '加密后的密码，绝不存明文',
     `nickname`    VARCHAR(50)  DEFAULT NULL COMMENT '昵称',
+    `email`          VARCHAR(100) DEFAULT NULL COMMENT '接收提醒的邮箱',
+    `email_reminder` TINYINT      NOT NULL DEFAULT 0 COMMENT '提醒到点时是否发送邮件：0 否，1 是',
     `create_time` DATETIME     NOT NULL COMMENT '创建时间',
     `update_time` DATETIME     NOT NULL COMMENT '更新时间',
     `deleted`     TINYINT      NOT NULL DEFAULT 0 COMMENT '逻辑删除：0 正常，1 已删除',

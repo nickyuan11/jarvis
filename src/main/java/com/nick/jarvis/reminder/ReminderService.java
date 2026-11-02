@@ -12,7 +12,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.nick.jarvis.entity.Reminder;
 import com.nick.jarvis.mapper.ReminderMapper;
-import com.nick.jarvis.notification.NotificationService;
+import com.nick.jarvis.notification.channel.NotificationDispatcher;
 import com.nick.jarvis.support.JarvisTime;
 
 /**
@@ -29,12 +29,12 @@ public class ReminderService {
     private static final int MAX_PENDING_PER_USER = 100;
 
     private final ReminderMapper reminderMapper;
-    private final NotificationService notificationService;
+    private final NotificationDispatcher dispatcher;
     private final JarvisTime time;
 
-    public ReminderService(ReminderMapper reminderMapper, NotificationService notificationService, JarvisTime time) {
+    public ReminderService(ReminderMapper reminderMapper, NotificationDispatcher dispatcher, JarvisTime time) {
         this.reminderMapper = reminderMapper;
-        this.notificationService = notificationService;
+        this.dispatcher = dispatcher;
         this.time = time;
     }
 
@@ -114,7 +114,10 @@ public class ReminderService {
         int fired = 0;
         for (Reminder reminder : due) {
             if (claim(reminder, now)) {
-                notificationService.send(reminder.getUserId(), "⏰ 提醒：" + reminder.getContent());
+                dispatcher.dispatch(reminder.getUserId(),
+                        "⏰ 提醒：" + reminder.getContent(),
+                        "提醒时间：" + format(reminder.getRemindAt()) + "\n事项：" + reminder.getContent()
+                                + "\n\n—— Jarvis");
                 fired++;
             }
         }

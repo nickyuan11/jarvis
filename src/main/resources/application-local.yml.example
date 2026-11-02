@@ -7,6 +7,10 @@ spring:
   ai:
     deepseek:
       api-key: 在这里填你的DeepSeek API Key
+  mail:
+    # 发件邮箱，以及在邮箱设置里开启 SMTP 后生成的授权码（不是邮箱登录密码）
+    username: 你的发件邮箱@163.com
+    password: 在这里填SMTP授权码
 
 jarvis:
   jwt:

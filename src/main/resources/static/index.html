@@ -82,7 +82,29 @@
             font-size: 14px;
         }
         #user-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        #logout { padding: 4px 10px; font-size: 13px; }
+        .foot-actions { display: flex; gap: 6px; flex-shrink: 0; }
+        .foot-actions button { padding: 4px 10px; font-size: 13px; }
+        /* ---------- 设置窗口 ---------- */
+        dialog {
+            border: 1px solid var(--line); border-radius: 14px; padding: 22px 22px 18px;
+            background: var(--panel); color: var(--text); width: min(420px, calc(100vw - 32px));
+        }
+        dialog::backdrop { background: rgba(0,0,0,.35); }
+        /* 页面底部的输入框也是 form，并且设成了横向排列，这里改回普通的纵向排列 */
+        dialog form { display: block; max-width: none; margin: 0; }
+        dialog h2 { font-size: 17px; margin: 0 0 4px; }
+        dialog .desc { color: var(--muted); font-size: 13px; margin: 0 0 16px; line-height: 1.6; }
+        dialog label.field { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+        dialog input[type=email] {
+            width: 100%; font: inherit; color: var(--text); background: var(--bg);
+            border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px;
+        }
+        dialog .check { display: flex; gap: 8px; align-items: center; margin: 14px 0 4px; font-size: 14px; }
+        dialog .msg { min-height: 20px; font-size: 13px; margin-top: 10px; }
+        dialog .msg.ok { color: var(--accent); }
+        dialog .msg.err { color: var(--error); }
+        dialog .actions { display: flex; justify-content: space-between; gap: 8px; margin-top: 12px; }
+        dialog .actions .primary { background: var(--accent); color: #fff; border-color: var(--accent); }
         /* ---------- 右侧聊天区 ---------- */
         .chat { flex: 1; min-width: 0; display: flex; flex-direction: column; }
         #toggle-aside { display: none; }
@@ -200,12 +222,32 @@
 </head>
 <body>
 <div id="toasts" aria-live="polite"></div>
+<dialog id="settings">
+    <form method="dialog" id="settings-form">
+        <h2>提醒设置</h2>
+        <p class="desc">填写邮箱并开启后，提醒到点时会同时发一封邮件，即使没打开 Jarvis 也能收到。邮箱只用于发送提醒。</p>
+        <label class="field" for="settings-email">邮箱</label>
+        <input id="settings-email" type="email" placeholder="you@example.com" autocomplete="email">
+        <label class="check"><input id="settings-email-reminder" type="checkbox"> 提醒到点时发送邮件</label>
+        <div class="msg" id="settings-msg"></div>
+        <div class="actions">
+            <button type="button" id="settings-test">发送测试邮件</button>
+            <span>
+                <button type="button" id="settings-cancel">关闭</button>
+                <button type="button" id="settings-save" class="primary">保存</button>
+            </span>
+        </div>
+    </form>
+</dialog>
 <aside id="aside">
     <div class="aside-head"><button id="new-chat" type="button">＋ 新对话</button></div>
     <ul id="conv-list"></ul>
     <div class="aside-foot">
         <span id="user-name"></span>
-        <button id="logout" type="button">退出</button>
+        <span class="foot-actions">
+            <button id="open-settings" type="button">设置</button>
+            <button id="logout" type="button">退出</button>
+        </span>
     </div>
 </aside>
 
@@ -535,6 +577,57 @@
     document.getElementById('toggle-aside').addEventListener('click', () => aside.classList.toggle('open'));
 
     document.getElementById('logout').addEventListener('click', logout);
+
+    // ---------------- 提醒设置 ----------------
+    const settingsDialog = document.getElementById('settings');
+    const settingsMsg = document.getElementById('settings-msg');
+
+    function setSettingsMsg(text, ok) {
+        settingsMsg.textContent = text;
+        settingsMsg.className = 'msg ' + (ok ? 'ok' : 'err');
+    }
+
+    async function errorText(resp) {
+        const data = await resp.json().catch(() => ({}));
+        return data.message || ('请求失败（HTTP ' + resp.status + '）');
+    }
+
+    document.getElementById('open-settings').addEventListener('click', async () => {
+        setSettingsMsg('', true);
+        const resp = await api('/api/users/me/settings');
+        if (resp.ok) {
+            const st = await resp.json();
+            document.getElementById('settings-email').value = st.email || '';
+            document.getElementById('settings-email-reminder').checked = st.emailReminder;
+            if (!st.emailAvailable) setSettingsMsg('服务器还没有配置发件邮箱，暂时无法发送邮件', false);
+        }
+        settingsDialog.showModal();
+    });
+
+    document.getElementById('settings-cancel').addEventListener('click', () => settingsDialog.close());
+
+    document.getElementById('settings-save').addEventListener('click', async () => {
+        const resp = await api('/api/users/me/settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                email: document.getElementById('settings-email').value.trim(),
+                emailReminder: document.getElementById('settings-email-reminder').checked
+            })
+        });
+        setSettingsMsg(resp.ok ? '已保存' : await errorText(resp), resp.ok);
+    });
+
+    document.getElementById('settings-test').addEventListener('click', async (e) => {
+        e.target.disabled = true;
+        setSettingsMsg('发送中…', true);
+        try {
+            const resp = await api('/api/users/me/settings/test-email', { method: 'POST' });
+            setSettingsMsg(resp.ok ? '已发送，请查收（也看看垃圾邮件箱）' : await errorText(resp), resp.ok);
+        } finally {
+            e.target.disabled = false;
+        }
+    });
 
     // ---------------- 提醒通知 ----------------
     // 每 30 秒问一次服务器有没有新通知（轮询）。实现简单，代价是最多延迟 30 秒；

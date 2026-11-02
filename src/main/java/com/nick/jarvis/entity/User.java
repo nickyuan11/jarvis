@@ -25,6 +25,12 @@ public class User {
 
     private String nickname;
 
+    /** 接收提醒的邮箱，可以为空 */
+    private String email;
+
+    /** 提醒到点时是否发送邮件 */
+    private Boolean emailReminder;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;
 

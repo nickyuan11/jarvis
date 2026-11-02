@@ -20,6 +20,21 @@ spring:
     url: jdbc:mysql://localhost:3306/jarvis?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
     username: ${DB_USERNAME:root}
     password: ${DB_PASSWORD:}
+  # 发送提醒邮件的 SMTP 配置。账号和授权码放在 application-local.yml 里
+  # 默认是 163 邮箱；用 QQ 邮箱的话 host 改成 smtp.qq.com
+  mail:
+    host: ${MAIL_HOST:smtp.163.com}
+    port: 465
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    default-encoding: UTF-8
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.ssl.enable: true
+      # 邮件服务器连不上时最多等 10 秒，别一直卡着
+      mail.smtp.connectiontimeout: 10000
+      mail.smtp.timeout: 10000
+      mail.smtp.writetimeout: 10000
   data:
     redis:
       host: localhost

@@ -51,6 +51,12 @@
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 
+        <!-- 邮件：提醒到点时发送邮件 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-mail</artifactId>
+        </dependency>
+
         <!-- Spring Security：认证（你是谁）和授权（你能做什么），还提供 BCrypt 密码加密 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
