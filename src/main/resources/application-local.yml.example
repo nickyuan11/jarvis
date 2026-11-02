@@ -11,3 +11,5 @@ spring:
 jarvis:
   jwt:
     secret: 在这里填一段随机生成的Base64字符串
+  pandascore:
+    token: 在这里填你的PandaScore token

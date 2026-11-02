@@ -11,7 +11,6 @@ import java.util.function.Supplier;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
@@ -20,27 +19,27 @@ import org.springframework.web.client.RestClientException;
 
 import com.nick.jarvis.support.JarvisTime;
 import com.nick.jarvis.support.MapPath;
+import com.nick.jarvis.support.TextCache;
 
 /**
  * NBA 数据，来自 ESPN 的公开接口（无需 API Key）。
  *
  * 两个原则：
  * 1. 只把大模型需要的信息整理成简短文本返回。原始 JSON 动辄几百 KB，直接塞给模型既费 token 又容易让它看错。
- * 2. 结果缓存在 Redis：打完的比赛结果不会变，没必要每次都请求 ESPN，既快，又能避免被对方限流。
+ * 2. 结果缓存在 Redis（TextCache）：打完的比赛结果不会变，没必要每次都请求 ESPN，既快，又能避免被对方限流。
  */
 @Service
 public class NbaService {
 
     private static final Logger log = LoggerFactory.getLogger(NbaService.class);
     private static final String BASE_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba";
-    private static final String CACHE_PREFIX = "jarvis:nba:";
     private static final DateTimeFormatter DISPLAY = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     private final RestClient restClient;
-    private final StringRedisTemplate redis;
+    private final TextCache cache;
     private final JarvisTime time;
 
-    public NbaService(StringRedisTemplate redis, JarvisTime time) {
+    public NbaService(TextCache cache, JarvisTime time) {
         // 第三方接口一定要设超时，否则对方卡住时，我们的请求线程也会一直卡着
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(Duration.ofSeconds(5));
@@ -53,7 +52,7 @@ public class NbaService {
                 .defaultHeader(HttpHeaders.USER_AGENT, "Jarvis/0.1 (personal assistant)")
                 .defaultHeader(HttpHeaders.ACCEPT, "application/json")
                 .build();
-        this.redis = redis;
+        this.cache = cache;
         this.time = time;
     }
 
@@ -202,31 +201,17 @@ public class NbaService {
     }
 
     /**
-     * 先查 Redis，没有再调用 loader 并写入缓存（Cache-Aside 模式）。
-     * Redis 出问题时直接查源数据：缓存只是加速，不能因为它影响功能。
+     * 缓存 key 带上版本号 v2：以后改了数据格式，把版本号加一，旧缓存就不会再被读到，到期自动清掉。
+     * ESPN 请求失败时转成统一的提示，交给工具层告诉大模型。
      */
     private String cached(String key, Duration ttl, Supplier<String> loader) {
-        String fullKey = CACHE_PREFIX + key;
-        try {
-            String hit = redis.opsForValue().get(fullKey);
-            if (hit != null) {
-                return hit;
+        return cache.get("nba:v2:" + key, ttl, () -> {
+            try {
+                return loader.get();
+            } catch (RestClientException e) {
+                log.warn("ESPN request failed for {}", key, e);
+                throw new IllegalStateException("暂时无法获取 NBA 数据，请稍后再试");
             }
-        } catch (Exception e) {
-            log.warn("Redis unavailable, skip cache for {}", fullKey, e);
-        }
-        String value;
-        try {
-            value = loader.get();
-        } catch (RestClientException e) {
-            log.warn("ESPN request failed for {}", fullKey, e);
-            throw new IllegalStateException("暂时无法获取 NBA 数据，请稍后再试");
-        }
-        try {
-            redis.opsForValue().set(fullKey, value, ttl);
-        } catch (Exception e) {
-            log.warn("Failed to write cache {}", fullKey, e);
-        }
-        return value;
+        });
     }
 }
