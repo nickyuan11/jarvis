@@ -1,40 +1,30 @@
 package com.nick.jarvis.notification.channel;
 
-import java.time.Duration;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.mail.MailException;
-import org.springframework.mail.SimpleMailMessage;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
+import com.nick.jarvis.entity.EmailOutbox;
 import com.nick.jarvis.entity.User;
 import com.nick.jarvis.mapper.UserMapper;
+import com.nick.jarvis.notification.outbox.EmailOutboxService;
+import com.nick.jarvis.notification.outbox.SmtpMailer;
 
 /**
  * 邮件通知：只发给填了邮箱并打开了邮件提醒的用户。
  *
- * @Async：在单独的线程池里发送。连接邮件服务器可能要好几秒，
- * 如果同步发送，定时任务会被卡住，其他用户的提醒也会跟着延迟。
+ * 不在这里直接连邮件服务器，而是写进发件箱（EmailOutboxService）：
+ * 先落库，再在后台线程立即试发一次；失败了由定时任务间隔越来越长地重试。
  */
 @Component
 public class EmailChannel implements NotificationChannel {
 
-    private static final Logger log = LoggerFactory.getLogger(EmailChannel.class);
-    private static final int MAX_ATTEMPTS = 3;
-
-    private final JavaMailSender mailSender;
+    private final SmtpMailer mailer;
     private final UserMapper userMapper;
-    private final String from;
+    private final EmailOutboxService outbox;
 
-    public EmailChannel(JavaMailSender mailSender, UserMapper userMapper,
-                        @Value("${spring.mail.username:}") String from) {
-        this.mailSender = mailSender;
+    public EmailChannel(SmtpMailer mailer, UserMapper userMapper, EmailOutboxService outbox) {
+        this.mailer = mailer;
         this.userMapper = userMapper;
-        this.from = from;
+        this.outbox = outbox;
     }
 
     @Override
@@ -43,10 +33,14 @@ public class EmailChannel implements NotificationChannel {
     }
 
     public boolean configured() {
-        return from != null && !from.isBlank();
+        return mailer.configured();
     }
 
-    @Async
+    /**
+     * 这个方法本身不再是 @Async：查用户、插入一行都只要几毫秒，
+     * 同步做完能保证“定时任务处理完这条提醒时，邮件已经在表里了”。
+     * 真正耗时的发送在 outbox.sendSoon 里异步进行。
+     */
     @Override
     public void send(Long userId, String title, String content) {
         if (!configured()) {
@@ -57,48 +51,15 @@ public class EmailChannel implements NotificationChannel {
                 || user.getEmail() == null || user.getEmail().isBlank()) {
             return;
         }
-        // 网络超时这类“临时性”错误，过几秒重试通常就能成功。
-        // 最多尝试 3 次，间隔逐渐拉长（退避），避免对本来就忙的邮件服务器连续施压
-        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-            try {
-                sendTo(user.getEmail(), title, content);
-                if (attempt > 1) {
-                    log.info("Reminder email to user {} sent on attempt {}", userId, attempt);
-                }
-                return;
-            } catch (MailException e) {
-                if (attempt == MAX_ATTEMPTS) {
-                    // 异步方法里的异常不会传回调用方，必须自己记录下来，否则发送失败了也没人知道
-                    log.error("Failed to send reminder email to user {} after {} attempts", userId, attempt, e);
-                    return;
-                }
-                log.warn("Reminder email to user {} failed on attempt {}, retrying: {}", userId, attempt, e.getMessage());
-                if (!sleep(Duration.ofSeconds(5L * attempt))) {
-                    return;
-                }
-            }
-        }
+        EmailOutbox mail = outbox.enqueue(userId, user.getEmail(), title, content);
+        outbox.sendSoon(mail);
     }
 
-    /** 等待一段时间；线程被中断（比如应用正在关闭）时返回 false，不再重试 */
-    private static boolean sleep(Duration duration) {
-        try {
-            Thread.sleep(duration);
-            return true;
-        } catch (InterruptedException e) {
-            // 恢复中断标记，让线程池知道这个线程被要求停止
-            Thread.currentThread().interrupt();
-            return false;
-        }
-    }
-
-    /** 同步发送，失败直接抛出异常。发送测试邮件时用，好把错误原因告诉用户 */
+    /**
+     * 同步发送，失败直接抛出异常。发送测试邮件时用：
+     * 用户正在页面上等结果，要立刻告诉他成功没有，不适合放进发件箱慢慢重试。
+     */
     public void sendTo(String to, String title, String content) {
-        SimpleMailMessage message = new SimpleMailMessage();
-        message.setFrom(from);
-        message.setTo(to);
-        message.setSubject(title);
-        message.setText(content);
-        mailSender.send(message);
+        mailer.send(to, title, content);
     }
 }
