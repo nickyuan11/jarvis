@@ -2,7 +2,6 @@ package com.nick.jarvis.notification.channel;
 
 import org.springframework.stereotype.Component;
 
-import com.nick.jarvis.entity.EmailOutbox;
 import com.nick.jarvis.entity.User;
 import com.nick.jarvis.mapper.UserMapper;
 import com.nick.jarvis.notification.outbox.EmailOutboxService;
@@ -12,7 +11,7 @@ import com.nick.jarvis.notification.outbox.SmtpMailer;
  * 邮件通知：只发给填了邮箱并打开了邮件提醒的用户。
  *
  * 不在这里直接连邮件服务器，而是写进发件箱（EmailOutboxService）：
- * 先落库，再在后台线程立即试发一次；失败了由定时任务间隔越来越长地重试。
+ * 先落库，事务提交后在后台线程立即试发一次；失败了由定时任务间隔越来越长地重试。
  */
 @Component
 public class EmailChannel implements NotificationChannel {
@@ -37,9 +36,8 @@ public class EmailChannel implements NotificationChannel {
     }
 
     /**
-     * 这个方法本身不再是 @Async：查用户、插入一行都只要几毫秒，
-     * 同步做完能保证“定时任务处理完这条提醒时，邮件已经在表里了”。
-     * 真正耗时的发送在 outbox.sendSoon 里异步进行。
+     * 只写入发件箱（插入一行，几毫秒），不在这里发送。
+     * 提醒触发时，这一步和抢占提醒在同一个事务里，要么一起成功，要么一起回滚。
      */
     @Override
     public void send(Long userId, String title, String content) {
@@ -51,8 +49,7 @@ public class EmailChannel implements NotificationChannel {
                 || user.getEmail() == null || user.getEmail().isBlank()) {
             return;
         }
-        EmailOutbox mail = outbox.enqueue(userId, user.getEmail(), title, content);
-        outbox.sendSoon(mail);
+        outbox.enqueue(userId, user.getEmail(), title, content);
     }
 
     /**

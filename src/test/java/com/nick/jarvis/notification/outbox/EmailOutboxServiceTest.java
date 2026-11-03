@@ -25,6 +25,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.mail.MailAuthenticationException;
 import org.springframework.mail.MailSendException;
 
@@ -46,6 +47,8 @@ class EmailOutboxServiceTest {
     private EmailOutboxMapper mapper;
     @Mock
     private SmtpMailer mailer;
+    @Mock
+    private ApplicationEventPublisher events;
 
     private EmailOutboxService service;
 
@@ -59,7 +62,7 @@ class EmailOutboxServiceTest {
     @BeforeEach
     void setUp() {
         JarvisTime time = new JarvisTime(Clock.fixed(NOW.atZone(ZONE).toInstant(), ZONE));
-        service = new EmailOutboxService(mapper, mailer, time);
+        service = new EmailOutboxService(mapper, mailer, time, events);
     }
 
     private static EmailOutbox pending(long id, int attempts) {
@@ -83,6 +86,18 @@ class EmailOutboxServiceTest {
         return captor.getAllValues().stream()
                 .map(w -> ((AbstractWrapper<?, ?, ?>) w).getParamNameValuePairs().values())
                 .toList();
+    }
+
+    @Test
+    void enqueueSavesTheMailAndAsksForAnImmediateSend() {
+        EmailOutbox mail = service.enqueue(1L, "nick@example.com", "标题", "正文");
+
+        verify(mapper).insert(mail);
+        assertThat(mail.getStatus()).isEqualTo(EmailOutbox.STATUS_PENDING);
+        assertThat(mail.getNextAttemptAt()).isEqualTo(NOW);
+        // 发布事件，事务提交后由 onQueued 立即试发；enqueue 自己不发送
+        verify(events).publishEvent(new EmailQueuedEvent(mail));
+        verifyNoInteractions(mailer);
     }
 
     @Test

@@ -5,8 +5,10 @@ import java.util.List;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.event.TransactionalEventListener;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
@@ -17,7 +19,7 @@ import com.nick.jarvis.support.JarvisTime;
 /**
  * 邮件发件箱（Outbox 模式）。
  *
- * 流程：先把邮件写进 email_outbox 表 → 立即在后台试发一次 → 失败了按指数退避，由定时任务重试。
+ * 流程：先把邮件写进 email_outbox 表 → 事务提交后立即在后台试发一次 → 失败了按指数退避，由定时任务重试。
  * 好处：
  * 1. 不会丢：邮件先落库，发送途中应用重启也还在表里；
  * 2. 不加重限流：失败后隔几分钟、间隔越来越长地重试，而不是连着猛试；
@@ -45,15 +47,19 @@ public class EmailOutboxService {
     private final EmailOutboxMapper mapper;
     private final SmtpMailer mailer;
     private final JarvisTime time;
+    private final ApplicationEventPublisher events;
 
-    public EmailOutboxService(EmailOutboxMapper mapper, SmtpMailer mailer, JarvisTime time) {
+    public EmailOutboxService(EmailOutboxMapper mapper, SmtpMailer mailer, JarvisTime time,
+                              ApplicationEventPublisher events) {
         this.mapper = mapper;
         this.mailer = mailer;
         this.time = time;
+        this.events = events;
     }
 
     /**
-     * 写入发件箱。只是插入一行，耗时约 1 毫秒；真正发送交给 sendSoon 或定时任务。
+     * 写入发件箱。只是插入一行，耗时约 1 毫秒；真正发送交给 onQueued 或定时任务。
+     * 调用方在事务里时，这一行会和调用方的其他修改一起提交或回滚。
      */
     public EmailOutbox enqueue(Long userId, String to, String subject, String content) {
         EmailOutbox mail = new EmailOutbox();
@@ -64,21 +70,30 @@ public class EmailOutboxService {
         mail.setStatus(EmailOutbox.STATUS_PENDING);
         mail.setAttempts(0);
         // 去掉毫秒：MySQL 的 DATETIME 会把小数秒四舍五入，可能存成“下一秒”，
-        // 那么紧接着的 sendSoon 会因为 next_attempt_at <= 现在 不成立而抢不到，白等一分钟
+        // 那么紧接着的立即试发会因为 next_attempt_at <= 现在 不成立而抢不到，白等一分钟
         mail.setNextAttemptAt(time.now().withNano(0));
         mapper.insert(mail);
+        // 只是“登记”一个事件，真正处理要等事务提交（见 onQueued）
+        events.publishEvent(new EmailQueuedEvent(mail));
         return mail;
     }
 
     /**
-     * 马上在后台线程试发一次，不卡住调用方（比如提醒的定时任务）。
+     * 写入邮件的事务提交之后，马上在后台线程试发一次。
      *
-     * 注意 @Async 只有“从别的 Bean 调用”时才生效：Spring 是靠代理对象拦截方法调用来切换线程的，
-     * 在这个类内部写 this.sendSoon() 会绕过代理，变成同步执行。所以由 EmailChannel 来调用它。
+     * 1. @TransactionalEventListener 默认在事务“提交之后”才执行。事务回滚了（比如提醒触发失败），
+     *    邮件那一行也跟着回滚了，这里根本不会被调用，不会发出一封“数据库里不存在”的邮件；
+     * 2. fallbackExecution = true：调用方没有开事务时（比如以后别处直接调 enqueue），不等提交，直接执行；
+     * 3. @Async：SMTP 可能卡好几秒，不能占着提交事务的那个线程（提醒的定时任务线程）。
+     *    监听器是 Spring 通过代理对象调用的，所以 @Async 在这里能生效，不是自调用。
+     *
+     * 就算这次没触发（比如提交后应用立刻崩了），邮件已经在表里，定时任务一分钟内会扫到它：
+     * 立即试发只是为了快，定时任务才是兜底。
      */
     @Async
-    public void sendSoon(EmailOutbox mail) {
-        attempt(mail);
+    @TransactionalEventListener(fallbackExecution = true)
+    public void onQueued(EmailQueuedEvent event) {
+        attempt(event.mail());
     }
 
     /**
@@ -139,7 +154,7 @@ public class EmailOutboxService {
      * “抢占”一封邮件：只有更新成功（影响 1 行）的那次才去发送。
      *
      * 1. 条件里带上 status = PENDING 和原来的 attempts，相当于乐观锁：
-     *    sendSoon 和定时任务、或者以后多台服务器，同时拿到同一封邮件，也只有一个能抢到；
+     *    立即试发和定时任务、或者以后多台服务器，同时拿到同一封邮件，也只有一个能抢到；
      * 2. 抢到的同时把 next_attempt_at 推后 5 分钟（租约），并且在同一条 UPDATE 里完成。
      *    发送途中应用崩了，5 分钟后它自然又“到期”，会被重新扫到，不需要专门的恢复逻辑；
      * 3. attempts 在抢占时就 +1，所以“崩溃”也算一次尝试，不会无限重试下去。

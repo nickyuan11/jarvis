@@ -12,7 +12,6 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.nick.jarvis.entity.Reminder;
 import com.nick.jarvis.mapper.ReminderMapper;
-import com.nick.jarvis.notification.channel.NotificationDispatcher;
 import com.nick.jarvis.support.JarvisTime;
 
 /**
@@ -29,12 +28,12 @@ public class ReminderService {
     private static final int MAX_PENDING_PER_USER = 100;
 
     private final ReminderMapper reminderMapper;
-    private final NotificationDispatcher dispatcher;
+    private final ReminderFirer firer;
     private final JarvisTime time;
 
-    public ReminderService(ReminderMapper reminderMapper, NotificationDispatcher dispatcher, JarvisTime time) {
+    public ReminderService(ReminderMapper reminderMapper, ReminderFirer firer, JarvisTime time) {
         this.reminderMapper = reminderMapper;
-        this.dispatcher = dispatcher;
+        this.firer = firer;
         this.time = time;
     }
 
@@ -113,40 +112,21 @@ public class ReminderService {
 
         int fired = 0;
         for (Reminder reminder : due) {
-            if (claim(reminder, now)) {
-                dispatcher.dispatch(reminder.getUserId(),
-                        "⏰ 提醒：" + reminder.getContent(),
-                        "提醒时间：" + format(reminder.getRemindAt()) + "\n事项：" + reminder.getContent()
-                                + "\n\n—— Jarvis");
-                fired++;
+            // 每条提醒一个独立的事务（在 ReminderFirer 里）。
+            // 不能把整个循环包进一个事务：那样一条失败，同一轮的所有提醒都会跟着回滚
+            try {
+                if (firer.fire(reminder, now)) {
+                    fired++;
+                }
+            } catch (Exception e) {
+                // 这条提醒的事务已经回滚，仍是“待提醒”，下一轮会重新触发；同一轮的其他提醒照常处理
+                log.error("Failed to fire reminder #{}, will retry next round", reminder.getId(), e);
             }
         }
         if (fired > 0) {
             log.info("Fired {} reminders", fired);
         }
         return fired;
-    }
-
-    /**
-     * “抢占”一条提醒：只有更新成功（影响 1 行）的那次才发送通知。
-     *
-     * 条件里带上 status = PENDING 和原来的 remind_at，相当于乐观锁：
-     * 如果以后部署了多台服务器，几台同时扫到同一条提醒，也只有一台能更新成功，用户不会收到重复提醒。
-     */
-    private boolean claim(Reminder reminder, LocalDateTime now) {
-        RepeatType repeat = RepeatType.parse(reminder.getRepeatType());
-        LambdaUpdateWrapper<Reminder> update = new LambdaUpdateWrapper<Reminder>()
-                .set(Reminder::getUpdateTime, now)
-                .eq(Reminder::getId, reminder.getId())
-                .eq(Reminder::getStatus, Reminder.STATUS_PENDING)
-                .eq(Reminder::getRemindAt, reminder.getRemindAt());
-        if (repeat == RepeatType.NONE) {
-            update.set(Reminder::getStatus, Reminder.STATUS_DONE);
-        } else {
-            // 循环提醒：状态保持 PENDING，把提醒时间推到下一个周期
-            update.set(Reminder::getRemindAt, repeat.nextAfter(reminder.getRemindAt(), now));
-        }
-        return reminderMapper.update(null, update) == 1;
     }
 
     public static String format(LocalDateTime dateTime) {
