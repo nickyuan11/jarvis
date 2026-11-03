@@ -20,10 +20,10 @@
 | 提醒的邮件推送 | ✅ 完成 |
 | 邮件发件箱（事务性 + 退避重试） | ✅ 完成 |
 | 开发环境 Docker 化（MySQL + Redis） | ✅ 完成 |
-| 个人知识库（RAG）+ 长期记忆 | 📅 第 4 周 |
+| 个人知识库（RAG）+ 长期记忆 | 🚧 进行中：向量库已接入 |
 | 每日简报、语音、部署上线 | 📅 第 5 周 |
 
-**技术栈**：Java 21 · Spring Boot 4.0.8 · Spring AI 2.0.2 · Spring Security · JJWT 0.13 · MyBatis-Plus 3.5.17 · MySQL 8.4 · Redis 7 · Docker · DeepSeek
+**技术栈**：Java 21 · Spring Boot 4.0.8 · Spring AI 2.0.2 · Spring Security · JJWT 0.13 · MyBatis-Plus 3.5.17 · MySQL 8.4 · PostgreSQL 17 + pgvector · Redis 7 · Docker · DeepSeek · 阿里云百炼（Embedding）
 
 ---
 
@@ -271,8 +271,46 @@
 - **重建 Redis 时报端口被占用**（`Only one usage of each socket address`）：新容器停在 Created 状态。`netstat` 查不到占用者，说明是 Docker Desktop 还没来得及释放旧容器的端口，再执行一次 `docker compose up -d` 就好了。
 - 排查时还排除了“本机另装了一个 Redis”的可能。Windows 允许 `0.0.0.0` 和 `127.0.0.1` 同时绑定同一个端口，如果真有，之前应用连的可能一直是本机的 Redis，而不是 Docker 里的。
 
+**个人知识库（RAG）第 1 步：接入向量库**
+
+**RAG 原理**
+- 模型只知道训练时见过的内容，问到不知道的事会编出“听起来像真的”回答（幻觉）。RAG（检索增强生成）是先从资料里找出相关内容放进提示词，让模型“开卷考试”。之前用工具结果纠正“詹姆斯在湖人”，就是同一个思路。
+- 不把整份资料塞进提示词：装不下（上下文有上限）、太贵（每一轮都要重发）、效果反而差（上下文越长越容易漏掉中间的细节，即 lost in the middle）、更慢。所以每次只挑最相关的几段。
+- 怎么挑：资料切块，用向量模型（Embedding）把每块变成一串数字。意思相关的文字向量相近，“手机怎么才能不那么快没电”和“延长电池续航的方法”一个词都不一样，向量却很近。检索就是找离问题向量最近的几块。
+- 向量相近是“经常在讨论同一件事”，是程度而不是精确匹配，所以检索结果里会混入不完全对口的内容，最终交给模型来判断。
+- RAG 能减少幻觉，但不能消灭：检索不到或找错时模型照样会编。所以要配合“资料里没有就说不知道”和注明出处。
+
+**设计讨论**
+- **切块大小**：太大时一块的向量是多件事的“平均”，和哪个问题都不像；太小时上下文被切断（“比例为 20%”不知道说的是什么）。采用几百字一块、按段落等自然边界切、相邻块重叠。找向量的是数据库的索引，块多不影响速度。RAG 擅长找细节，不擅长全局概括。
+- **检索做成工具（Agentic RAG）**，而不是每次提问都自动检索：每次都检索会把无关内容塞进提示词，产生噪音；做成工具后，模型能结合上下文改写检索词（“那违约金呢”改写成“租房合同 违约金”）。代价是模型可能该查不查，靠工具描述和系统提示词约束。
+- **用户隔离**：模型不参与（会被提示词注入）；工具从 `ToolContext` 拿到可信的用户 id；过滤条件必须放进检索查询本身，不能“先取前 5 块再在 Java 里过滤”，否则可能过滤完一块不剩。
+- **两个数据库**：业务数据留在 MySQL，PostgreSQL 只存向量。代价是上传时两边没有共享的事务，需要靠文档状态（PROCESSING / READY / FAILED）+ 重跑前先删旧块（幂等）来保证可恢复；检索时先从 MySQL 查出 READY 的文档 id，再作为过滤条件交给向量检索（跨库不能 JOIN，在应用里拼）。
+- **向量模型选阿里云百炼 `qwen3.7-text-embedding`**（1024 维）：国内直连、OpenAI 兼容接口、开发阶段有免费额度。换模型代价很大：不同模型的向量互不兼容，所有资料都要重新向量化。
+- 第一版只支持 `.txt` 和 `.md`，单个文件不超过 1 MB；PDF、Word 后续再加。
+
+**实现**
+- Compose 新增 `pgvector/pgvector:pg17`，第一次启动时执行 `db/vector/schema.sql`：安装扩展、建 `vector_store` 表和 HNSW 索引（近似最近邻，用少量精度换速度）。
+- `spring.ai.model.chat=deepseek`、`spring.ai.model.embedding=openai`：对话和向量化各用一家，OpenAI 模块的画图、语音等能力全部关闭。
+- 多数据源：PostgreSQL 的数据源声明为 `@Bean(defaultCandidate = false)`，MySQL 仍由 Spring Boot 自动配置，MyBatis-Plus 和事务管理器不受影响；只有写了 `@Qualifier("vector")` 的地方才用 PostgreSQL。
+- 不用 pgvector 的 starter（它会拿默认数据源，也就是 MySQL），手动用 `PgVectorStore.builder(jdbcTemplate, embeddingModel)` 创建。
+- 冒烟测试 `VectorSmokeTest`：配置开关打开时，启动后存三句话再检索一句意思相近的话，验证整条链路；测完删除测试数据。
+
+**学到的**
+- Spring Boot 只在没有自定义 `DataSource` 时才自动配置；Spring Boot 4 的 `DataSourceProperties` 换到了 `org.springframework.boot.jdbc.autoconfigure` 包。
+- Spring AI 2.0 的 PgVectorStore 默认不再自动建表（不兼容的改动）。
+- pgvector 镜像里 `POSTGRES_USER` 是超级用户，本地开发先这样用，部署时要另建只读写向量表的账号。
+
+**验证**
+- 冒烟测试通过：用“手机怎么才能不那么快没电”检索，相似度依次为 0.713（延长手机电池续航的几个方法）、0.249（红烧肉的做法）、0.207（湖人比赛结果）。正确结果遥遥领先，无关内容在 0.2 左右，之后定检索门槛时参考。
+
 ---
 
 ## 下一步
 
-1. 第 4 周：个人知识库（RAG + pgvector）+ 长期记忆。
+1. 知识库第 2 步：`document` 表 + 上传接口，后台切块、向量化。已定的设计：
+   - 字段：id、user_id、文件名、大小、原文（MEDIUMTEXT，重试时要用）、内容哈希（防重复上传）、状态（PROCESSING / READY / FAILED）、块数、attempts、next_attempt_at、last_error、create_time、update_time。
+   - 处理卡住的恢复：照搬发件箱的租约。开始处理时把 next_attempt_at 设为“现在 + 10 分钟”，定时任务扫描超时的 PROCESSING 重新抢占（条件更新带 attempts）；重跑先删旧块（幂等）；attempts 达到上限标记 FAILED。
+   - 待讨论：删除资料用逻辑删除还是物理删除（隐私；PostgreSQL 里的向量块怎么一起删）。
+2. 知识库第 3 步：检索工具（按用户和 READY 文档过滤），回答注明出处。
+3. 知识库第 4 步：资料管理页面，回答里显示引用来源。
+4. 长期记忆。

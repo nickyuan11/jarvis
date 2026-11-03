@@ -39,6 +39,31 @@ services:
       retries: 20
     restart: unless-stopped
 
+  postgres:
+    # 带 pgvector 扩展的 PostgreSQL 17。只用来存知识库的向量，业务数据仍在 MySQL
+    image: pgvector/pgvector:pg17
+    container_name: jarvis-postgres
+    ports:
+      # 本机没有装 PostgreSQL，直接用默认端口 5432；同样只绑定 127.0.0.1
+      - "127.0.0.1:5432:5432"
+    environment:
+      # 注意：这个镜像里 POSTGRES_USER 是超级用户。本地开发先这样用，部署时应另建一个只能读写向量表的账号
+      POSTGRES_USER: jarvis
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 里设置 POSTGRES_PASSWORD}
+      POSTGRES_DB: jarvis_vector
+      TZ: Asia/Shanghai
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # 和 MySQL 一样：数据目录为空时执行一次，装好扩展、建好向量表
+      - ./src/main/resources/db/vector/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      # pg_isready：PostgreSQL 自带的“能不能连上”检查工具
+      test: ["CMD-SHELL", "pg_isready -U jarvis -d jarvis_vector"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
   redis:
     image: redis:7
     container_name: jarvis-redis
@@ -54,4 +79,5 @@ services:
 
 volumes:
   mysql-data:
+  postgres-data:
   redis-data:

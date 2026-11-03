@@ -16,7 +16,7 @@
     <artifactId>jarvis</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>jarvis</name>
-    <description>An AI reading assistant built with Spring Boot</description>
+    <description>A personal AI assistant built with Spring Boot and Spring AI</description>
 
     <properties>
         <java.version>21</java.version>
@@ -88,6 +88,29 @@
             <artifactId>spring-ai-starter-model-deepseek</artifactId>
         </dependency>
 
+        <!-- 向量化（Embedding）：阿里云百炼提供 OpenAI 兼容的接口，所以借用 Spring AI 的 OpenAI 模块来连接。
+             对话仍然用 DeepSeek，靠 application.yml 里的 spring.ai.model.chat 指定 -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-model-openai</artifactId>
+        </dependency>
+        <!-- 向量库：pgvector。故意不用 starter：starter 会拿项目里默认的数据源（MySQL），
+             这里在 VectorStoreConfig 里手动创建，让它连 PostgreSQL -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-pgvector-store</artifactId>
+        </dependency>
+        <!-- JDBC：DataSourceProperties、JdbcTemplate，配置第二个数据源要用到 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
+        </dependency>
+        <!-- PostgreSQL 驱动 -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
         <!-- MyBatis-Plus：在 MyBatis 基础上提供通用 CRUD，Spring Boot 4 要用 boot4 版本的 starter -->
         <dependency>
             <groupId>com.baomidou</groupId>

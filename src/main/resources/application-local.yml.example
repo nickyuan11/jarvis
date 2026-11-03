@@ -6,6 +6,9 @@ spring:
     username: jarvis
     password: 在这里填jarvis账号的密码
   ai:
+    openai:
+      # 阿里云百炼的 API Key（用于向量化）
+      api-key: 在这里填百炼的API Key
     deepseek:
       api-key: 在这里填你的DeepSeek API Key
   mail:
@@ -14,6 +17,10 @@ spring:
     password: 在这里填SMTP授权码
 
 jarvis:
+  vector:
+    datasource:
+      # 和 .env 里的 POSTGRES_PASSWORD 一致
+      password: 在这里填PostgreSQL的密码
   jwt:
     secret: 在这里填一段随机生成的Base64字符串
   pandascore:

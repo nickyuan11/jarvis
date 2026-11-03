@@ -42,6 +42,24 @@ spring:
       host: localhost
       port: 6379
   ai:
+    model:
+      # 同时引入了 DeepSeek 和 OpenAI 两个模型模块，这里指定每种能力用哪一家
+      chat: deepseek          # 对话：DeepSeek
+      embedding: openai       # 向量化：OpenAI 兼容接口（实际连的是阿里云百炼）
+      # OpenAI 模块还带着画图、语音、内容审核，用不到，全部关掉
+      image: none
+      audio:
+        speech: none
+        transcription: none
+      moderation: none
+    openai:
+      # 这里的 openai 只是借用 OpenAI 的接口格式，地址和 Key 都是百炼的
+      base-url: ${EMBEDDING_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+      # 百炼的 API Key 放在 application-local.yml 里
+      api-key: ${EMBEDDING_API_KEY:}
+      embedding:
+        # 换模型时，所有资料都要重新向量化（不同模型的向量互不兼容），维度也要和 jarvis.vector.dimensions 一致
+        model: qwen3.7-text-embedding
     deepseek:
       # API Key 放在 application-local.yml 里，这里只是兜底读环境变量
       api-key: ${DEEPSEEK_API_KEY:}
@@ -59,6 +77,20 @@ jarvis:
   pandascore:
     # 英雄联盟赛事数据的 token，放在 application-local.yml 里
     token: ${PANDASCORE_TOKEN:}
+  vector:
+    # 向量库（PostgreSQL + pgvector）的数据源。业务数据仍在 MySQL（spring.datasource）
+    datasource:
+      url: jdbc:postgresql://${VECTOR_DB_HOST:localhost}:${VECTOR_DB_PORT:5432}/jarvis_vector
+      username: ${VECTOR_DB_USERNAME:jarvis}
+      # 密码放在 application-local.yml 里，和 .env 的 POSTGRES_PASSWORD 一致
+      password: ${VECTOR_DB_PASSWORD:}
+      configuration:
+        # 连接池起个名字，日志里能分清是哪个库的连接
+        pool-name: vector-pool
+    # 向量维度，要和向量模型的输出、db/vector/schema.sql 里的 vector(1024) 一致
+    dimensions: 1024
+    # 打开后，启动时跑一遍向量库冒烟测试（VectorSmokeTest），验证完记得关掉
+    smoke-test: false
   rate-limit:
     chat:
       # 每个用户在一个时间窗口内最多发送多少条消息
