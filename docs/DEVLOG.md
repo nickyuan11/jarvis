@@ -19,10 +19,11 @@
 | 工具调用：提醒事项、NBA、英雄联盟赛事 | ✅ 完成 |
 | 提醒的邮件推送 | ✅ 完成 |
 | 邮件发件箱（事务性 + 退避重试） | ✅ 完成 |
+| 开发环境 Docker 化（MySQL + Redis） | ✅ 完成 |
 | 个人知识库（RAG）+ 长期记忆 | 📅 第 4 周 |
 | 每日简报、语音、部署上线 | 📅 第 5 周 |
 
-**技术栈**：Java 21 · Spring Boot 4.0.8 · Spring AI 2.0.2 · Spring Security · JJWT 0.13 · MyBatis-Plus 3.5.17 · MySQL 8 · Redis 7 · Docker · DeepSeek
+**技术栈**：Java 21 · Spring Boot 4.0.8 · Spring AI 2.0.2 · Spring Security · JJWT 0.13 · MyBatis-Plus 3.5.17 · MySQL 8.4 · Redis 7 · Docker · DeepSeek
 
 ---
 
@@ -246,9 +247,32 @@
 **验证**
 - 单元测试通过。把 `email_outbox` 表临时改名，让写入发件箱必定失败：提醒保持 PENDING，站内通知也没有写入，控制台每 30 秒报一次错。把表名改回后，不用重启，30 秒内只弹出一次通知并收到邮件，发件箱状态为 `SENT`。只弹一次，证明失败的那几轮站内通知确实跟着回滚了。
 
+**MySQL 放进 Docker**
+- `compose.yaml` 新增 MySQL 8.4：第一次启动时自动建库，创建只能访问 `jarvis` 库的 `jarvis` 账号，并执行 `schema.sql` 建表。换电脑时只需复制 `.env`，再执行 `docker compose up -d`。
+- 本机原来的 MySQL 保留。用 `mysqldump` 把数据一次性导入容器，账号、会话、提醒都搬过来了。
+- README 更新为现在的项目定位，并写上完整的环境搭建步骤。
+
+**设计要点**
+- **端口映射是“宿主机:容器”**：本机 MySQL 占着 3306，容器映射到 3307，两个并存，以后开发别的项目也不受影响。
+- **只绑定 `127.0.0.1`**：Docker 默认绑定所有网卡，同一个局域网的人也能连上。顺便修正了 Redis：它没有密码，之前却对外开放。
+- **持久化分两层**：AOF 把每条写命令追加到日志，Redis 重启时重放（RDB 才是快照），防的是进程重启丢数据；volume 防的是容器删除丢数据。容器删除后数据还在，靠的是 volume。
+- **初始化脚本只执行一次**：`docker-entrypoint-initdb.d` 里的脚本只在数据目录为空时执行（`down -v` 删掉 volume 后才会再次执行）。以后新增的迁移脚本不会自动生效，这正是 Flyway 这类工具存在的原因。
+- **密码放在 `.env`**：Compose 会自动读取它，它不进 Git，提交的是 `.env.example` 模板，和 `application-local.yml` 是同一个思路。没配置时 `${VAR:?提示}` 会直接报错，不会用空密码启动。
+- **最小权限**：应用改用专用的 `jarvis` 账号，不用 root。万一应用的密码泄露，影响范围也只有这一个库。
+- 镜像固定版本号 `mysql:8.4`，不用 latest，避免镜像更新后版本悄悄变了。
+- 已有数据不写进 `schema.sql`：它会提交到 GitHub，而数据里有密码哈希、邮箱和聊天记录。导出时用 `--no-create-info` 只导数据，表结构以 `schema.sql` 为准，顺便检验它有没有漏掉列。
+
+**学到的**
+- PowerShell 5.1 的 `>` 会把文件存成 UTF-16，MySQL 读进去是乱码，所以 `mysqldump` 要用 `--result-file`。PowerShell 也不支持 `<`，导入时先 `docker cp` 进容器，再在容器的 `sh` 里重定向。
+- Compose 文件里的 `$$` 是转义：表示在容器里取环境变量，而不是在 Compose 解析时替换。
+- 健康检查用 `mysqladmin ping -h 127.0.0.1` 走 TCP：初始化建表期间 MySQL 不开放网络，真正启动完成后才显示 healthy。
+
+**踩过的坑**
+- **重建 Redis 时报端口被占用**（`Only one usage of each socket address`）：新容器停在 Created 状态。`netstat` 查不到占用者，说明是 Docker Desktop 还没来得及释放旧容器的端口，再执行一次 `docker compose up -d` 就好了。
+- 排查时还排除了“本机另装了一个 Redis”的可能。Windows 允许 `0.0.0.0` 和 `127.0.0.1` 同时绑定同一个端口，如果真有，之前应用连的可能一直是本机的 Redis，而不是 Docker 里的。
+
 ---
 
 ## 下一步
 
-1. 把 MySQL 也放进 Docker，换电脑时一条命令搭好环境。
-2. 第 4 周：个人知识库（RAG + pgvector）+ 长期记忆。
+1. 第 4 周：个人知识库（RAG + pgvector）+ 长期记忆。

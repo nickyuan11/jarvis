@@ -1,17 +1,57 @@
 # 本地开发用到的中间件。在项目根目录运行：
-#   docker compose up -d     启动
-#   docker compose down      停止（数据保留在 volume 里）
+#   docker compose up -d      启动
+#   docker compose ps         查看状态，MySQL 显示 healthy 才算真正可用
+#   docker compose down       停止并删除容器（数据保留在 volume 里）
+#   docker compose down -v    连数据一起删掉（慎用！下次启动会重新建空表）
+#
+# 第一次使用：把 .env.example 复制成 .env，填上密码（.env 不会提交到 Git）
 services:
+  mysql:
+    # 固定版本号，不用 latest：镜像更新后版本悄悄变了，出了问题很难查。8.4 是长期支持版
+    image: mysql:8.4
+    container_name: jarvis-mysql
+    ports:
+      # 宿主机:容器。本机的 MySQL 占着 3306，容器映射到 3307，两个互不干扰
+      # 只绑定 127.0.0.1：只有本机能连，同一个局域网里的其他电脑连不上
+      - "127.0.0.1:3307:3306"
+    environment:
+      # 密码从同目录的 .env 读取；没配置时直接报错，不会用空密码启动
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请在 .env 里设置 MYSQL_ROOT_PASSWORD}
+      # 第一次启动时自动创建 jarvis 库，以及只能访问这个库的 jarvis 账号（最小权限原则）
+      MYSQL_DATABASE: jarvis
+      MYSQL_USER: jarvis
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请在 .env 里设置 MYSQL_PASSWORD}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # 数据目录为空（第一次启动）时自动执行，建好所有表。
+      # 之后再改 schema.sql 不会自动生效，已有的库要手动执行 migration 里的脚本
+      - ./src/main/resources/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      # 用 127.0.0.1 走 TCP：初始化（建表）期间 MySQL 不开放网络，真正启动完成后才会显示 healthy
+      # $$ 是 compose 的转义，表示在容器里取环境变量，而不是在 compose 文件里替换
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
   redis:
     image: redis:7
     container_name: jarvis-redis
     ports:
-      - "6379:6379"
-    # 开启 AOF 持久化：容器重启后，黑名单等数据不会丢
+      # 只绑定 127.0.0.1：这个 Redis 没设密码，不能让局域网里的其他电脑连上
+      - "127.0.0.1:6379:6379"
+    # 开启 AOF 持久化：每条写命令追加到日志，Redis 重启后重放，黑名单等数据不会丢。
+    # 容器删除后数据还在，靠的是下面的 volume
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis-data:/data
     restart: unless-stopped
 
 volumes:
+  mysql-data:
   redis-data:

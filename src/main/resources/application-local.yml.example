@@ -2,8 +2,9 @@
 # 第一次使用：把 application-local.yml.example 复制成 application-local.yml，再填上自己的值。
 spring:
   datasource:
-    username: root
-    password: 在这里填你的MySQL密码
+    # Docker 里的 MySQL 账号，密码和 .env 里的 MYSQL_PASSWORD 一致
+    username: jarvis
+    password: 在这里填jarvis账号的密码
   ai:
     deepseek:
       api-key: 在这里填你的DeepSeek API Key
