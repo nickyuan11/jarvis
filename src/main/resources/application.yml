@@ -13,6 +13,12 @@ spring:
     async:
       # 流式接口是异步请求，给足时间，避免长回复被中途断开
       request-timeout: 180s
+  servlet:
+    multipart:
+      # 上传大小的“外层”限制。业务上限是 1 MB（KnowledgeService 里检查，能返回清楚的提示），
+      # 这里放宽到 2 MB，只是为了挡住特别大的请求，不让它们进到业务代码
+      max-file-size: 2MB
+      max-request-size: 2MB
   # 读取本地私密配置（密码、API Key），这个文件已被 .gitignore 忽略
   config:
     import: optional:classpath:application-local.yml
@@ -42,6 +48,14 @@ spring:
       host: localhost
       port: 6379
   ai:
+    retry:
+      # Spring AI 调用模型失败时的自动重试。默认最多 10 次、间隔逐渐拉长，全部试完可能要十几分钟，
+      # 比资料处理的租约（10 分钟）还长。这里只做几次快速重试，更长间隔的重试交给 DocumentProcessor
+      max-attempts: 3
+      backoff:
+        initial-interval: 2s
+        multiplier: 2
+        max-interval: 10s
     model:
       # 同时引入了 DeepSeek 和 OpenAI 两个模型模块，这里指定每种能力用哪一家
       chat: deepseek          # 对话：DeepSeek

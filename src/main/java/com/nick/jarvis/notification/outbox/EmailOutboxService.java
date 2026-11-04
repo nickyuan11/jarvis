@@ -14,6 +14,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.nick.jarvis.entity.EmailOutbox;
 import com.nick.jarvis.mapper.EmailOutboxMapper;
+import com.nick.jarvis.support.Exceptions;
 import com.nick.jarvis.support.JarvisTime;
 
 /**
@@ -208,17 +209,6 @@ public class EmailOutboxService {
      * 今天排查时外层是 MailAuthenticationException，真正的原因在最里层的 SocketTimeoutException。
      */
     static String describe(Throwable e) {
-        Throwable root = e;
-        while (root.getCause() != null && root.getCause() != root) {
-            root = root.getCause();
-        }
-        String text = e.getClass().getSimpleName();
-        if (root != e) {
-            text += " <- " + root.getClass().getSimpleName();
-        }
-        if (root.getMessage() != null) {
-            text += ": " + root.getMessage();
-        }
-        return text.length() > MAX_ERROR_LENGTH ? text.substring(0, MAX_ERROR_LENGTH) : text;
+        return Exceptions.describe(e, MAX_ERROR_LENGTH);
     }
 }

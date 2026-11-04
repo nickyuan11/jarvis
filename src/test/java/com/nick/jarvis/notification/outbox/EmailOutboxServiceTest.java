@@ -84,7 +84,13 @@ class EmailOutboxServiceTest {
         ArgumentCaptor<Wrapper> captor = ArgumentCaptor.forClass(Wrapper.class);
         verify(mapper, times(expectedCalls)).update(isNull(), captor.capture());
         return captor.getAllValues().stream()
-                .map(w -> ((AbstractWrapper<?, ?, ?>) w).getParamNameValuePairs().values())
+                .map(w -> {
+                    AbstractWrapper<?, ?, ?> wrapper = (AbstractWrapper<?, ?, ?>) w;
+                    // WHERE 条件（eq、isNull 等）是懒加载的：生成 SQL 时才登记参数，set 的参数则是立刻登记。
+                    // Mapper 是模拟的，不会生成 SQL，所以这里手动生成一次，WHERE 里的值才会出现
+                    wrapper.getSqlSegment();
+                    return wrapper.getParamNameValuePairs().values();
+                })
                 .toList();
     }
 
