@@ -32,6 +32,7 @@ import com.nick.jarvis.mapper.MessageMapper;
 import com.nick.jarvis.ratelimit.RateLimiter;
 import com.nick.jarvis.security.CurrentUser;
 import com.nick.jarvis.support.JarvisTime;
+import com.nick.jarvis.tools.KnowledgeTools;
 import com.nick.jarvis.tools.LolTools;
 import com.nick.jarvis.tools.NbaTools;
 import com.nick.jarvis.tools.ReminderTools;
@@ -73,6 +74,7 @@ public class ChatService {
                        ReminderTools reminderTools,
                        NbaTools nbaTools,
                        LolTools lolTools,
+                       KnowledgeTools knowledgeTools,
                        @Value("${jarvis.chat.system-prompt}") String systemPrompt,
                        @Value("${jarvis.chat.history-size:20}") int historySize) {
         this.chatClient = chatClientBuilder.build();
@@ -82,7 +84,7 @@ public class ChatService {
         this.time = time;
         this.systemPrompt = systemPrompt;
         this.historySize = historySize;
-        this.tools = new Object[] {reminderTools, nbaTools, lolTools};
+        this.tools = new Object[] {reminderTools, nbaTools, lolTools, knowledgeTools};
     }
 
     /**
