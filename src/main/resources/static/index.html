@@ -105,6 +105,27 @@
         dialog .msg.err { color: var(--error); }
         dialog .actions { display: flex; justify-content: space-between; gap: 8px; margin-top: 12px; }
         dialog .actions .primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+        /* ---------- 资料窗口 ---------- */
+        #knowledge { width: min(620px, calc(100vw - 32px)); }
+        .kb-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
+        .kb-tabs { display: flex; gap: 4px; }
+        .kb-tabs button { border: none; padding: 5px 10px; color: var(--muted); }
+        .kb-tabs button.active { color: var(--text); background: var(--bg); }
+        #kb-upload { background: var(--accent); color: #fff; border-color: var(--accent); }
+        #kb-upload:disabled { opacity: .5; cursor: not-allowed; }
+        #kb-list { list-style: none; margin: 0; padding: 0; max-height: min(50vh, 420px); overflow-y: auto; border-top: 1px solid var(--line); }
+        #kb-list li { display: flex; align-items: center; gap: 10px; padding: 10px 2px; border-bottom: 1px solid var(--line); font-size: 14px; }
+        #kb-list .info { flex: 1; min-width: 0; }
+        #kb-list .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        #kb-list .sub { font-size: 12px; color: var(--muted); margin-top: 3px; word-break: break-word; }
+        #kb-list .sub.err { color: var(--error); }
+        #kb-list .ops { display: flex; gap: 4px; flex-shrink: 0; }
+        #kb-list .ops button { padding: 3px 9px; font-size: 13px; }
+        #kb-list li.kb-empty { justify-content: center; color: var(--muted); font-size: 13px; padding: 22px 2px; }
+        .kb-status { font-size: 12px; padding: 2px 8px; border-radius: 999px; flex-shrink: 0; border: 1px solid var(--line); color: var(--muted); }
+        .kb-status.READY { color: var(--accent); border-color: var(--accent); }
+        .kb-status.FAILED { color: var(--error); border-color: var(--error); }
+        #kb-msg { white-space: pre-line; }
         /* ---------- 右侧聊天区 ---------- */
         .chat { flex: 1; min-width: 0; display: flex; flex-direction: column; }
         #toggle-aside { display: none; }
@@ -239,12 +260,30 @@
         </div>
     </form>
 </dialog>
+<dialog id="knowledge">
+    <form method="dialog">
+        <h2>我的资料</h2>
+        <p class="desc">上传 .txt 或 .md 文件（每个不超过 1 MB）。处理完成后，就可以在对话里问 Jarvis 资料里的内容，回答会注明出处。删除的资料在回收站保留 7 天。</p>
+        <div class="kb-toolbar">
+            <div class="kb-tabs">
+                <button type="button" data-tab="active" class="active">资料</button>
+                <button type="button" data-tab="trash">回收站</button>
+            </div>
+            <button type="button" id="kb-upload">上传文件</button>
+            <input type="file" id="kb-file" accept=".txt,.md" multiple hidden>
+        </div>
+        <ul id="kb-list"></ul>
+        <div class="msg" id="kb-msg"></div>
+        <div class="actions"><span></span><button type="button" id="kb-close">关闭</button></div>
+    </form>
+</dialog>
 <aside id="aside">
     <div class="aside-head"><button id="new-chat" type="button">＋ 新对话</button></div>
     <ul id="conv-list"></ul>
     <div class="aside-foot">
         <span id="user-name"></span>
         <span class="foot-actions">
+            <button id="open-knowledge" type="button">资料</button>
             <button id="open-settings" type="button">设置</button>
             <button id="logout" type="button">退出</button>
         </span>
@@ -629,11 +668,256 @@
         }
     });
 
+    // ---------------- 我的资料（知识库） ----------------
+    const kbDialog = document.getElementById('knowledge');
+    const kbList = document.getElementById('kb-list');
+    const kbMsg = document.getElementById('kb-msg');
+    const kbFile = document.getElementById('kb-file');
+    const kbUploadBtn = document.getElementById('kb-upload');
+    const KB_STATUS = { PROCESSING: '处理中', READY: '可用', FAILED: '失败' };
+    const KB_MAX_BYTES = 1024 * 1024;
+    let kbTab = 'active';
+    // 每份资料上一次看到的状态：用来发现“处理中 → 可用 / 失败”的变化
+    const kbLastStatus = new Map();
+    let kbPollTimer = null;
+    let kbPollDelay = 2000;
+
+    function setKbMsg(text, ok) {
+        kbMsg.textContent = text;
+        kbMsg.className = 'msg ' + (ok ? 'ok' : 'err');
+    }
+
+    function formatSize(bytes) {
+        return bytes < 1024 ? bytes + ' B' : (bytes / 1024).toFixed(1) + ' KB';
+    }
+
+    function formatTime(iso) {
+        return iso ? iso.replace('T', ' ').slice(0, 16) : '';
+    }
+
+    async function fetchDocuments(trash) {
+        const resp = await api('/api/knowledge/documents' + (trash ? '?trash=true' : ''));
+        if (!resp.ok) throw new Error(await errorText(resp));
+        return resp.json();
+    }
+
+    /** 刷新窗口里当前标签页的列表 */
+    async function refreshKnowledge() {
+        let docs;
+        try {
+            docs = await fetchDocuments(kbTab === 'trash');
+        } catch (e) {
+            setKbMsg(e.message, false);
+            return;
+        }
+        renderKnowledge(docs);
+        if (kbTab === 'active') {
+            noticeStatusChanges(docs);
+            if (!kbPollTimer && docs.some(d => d.status === 'PROCESSING')) startKbPolling();
+        }
+    }
+
+    function renderKnowledge(docs) {
+        kbList.innerHTML = '';
+        if (!docs.length) {
+            const li = document.createElement('li');
+            li.className = 'kb-empty';
+            li.textContent = kbTab === 'trash' ? '回收站是空的' : '还没有资料，点右上角“上传文件”添加';
+            kbList.appendChild(li);
+            return;
+        }
+        for (const d of docs) kbList.appendChild(kbItem(d));
+    }
+
+    function kbButton(text, onClick) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = text;
+        btn.addEventListener('click', onClick);
+        return btn;
+    }
+
+    /** 一行资料。文件名是用户起的，一律用 textContent 显示，防止 XSS */
+    function kbItem(d) {
+        const li = document.createElement('li');
+        const info = document.createElement('div');
+        info.className = 'info';
+        const name = document.createElement('div');
+        name.className = 'name';
+        name.textContent = d.filename;
+        name.title = d.filename;
+        const sub = document.createElement('div');
+        sub.className = 'sub';
+        const ops = document.createElement('div');
+        ops.className = 'ops';
+
+        if (kbTab === 'trash') {
+            sub.textContent = formatSize(d.sizeBytes) + ' · 将于 ' + formatTime(d.purgeAt) + ' 永久删除';
+            ops.append(kbButton('恢复', () => kbAction(d, 'restore')));
+            info.append(name, sub);
+            li.append(info, ops);
+            return li;
+        }
+
+        if (d.status === 'READY') {
+            sub.textContent = formatSize(d.sizeBytes) + ' · ' + d.chunkCount + ' 段 · 上传于 ' + formatTime(d.createTime);
+        } else if (d.status === 'FAILED') {
+            sub.textContent = '处理失败：' + (d.lastError || '未知原因');
+            sub.classList.add('err');
+            ops.append(kbButton('重试', () => kbAction(d, 'retry')));
+        } else {
+            sub.textContent = formatSize(d.sizeBytes) + ' · 正在切块、向量化…';
+        }
+        ops.append(kbButton('删除', () => kbDelete(d)));
+        const status = document.createElement('span');
+        status.className = 'kb-status ' + d.status;
+        status.textContent = KB_STATUS[d.status] || d.status;
+        info.append(name, sub);
+        li.append(info, status, ops);
+        return li;
+    }
+
+    async function kbAction(d, action) {
+        const resp = await api('/api/knowledge/documents/' + d.id + '/' + action, { method: 'POST' });
+        if (!resp.ok) {
+            setKbMsg(await errorText(resp), false);
+            return;
+        }
+        setKbMsg(action === 'restore' ? '已恢复《' + d.filename + '》，正在重新处理' : '已重新开始处理《' + d.filename + '》', true);
+        kbLastStatus.set(d.id, 'PROCESSING');
+        await refreshKnowledge();
+        startKbPolling();
+    }
+
+    async function kbDelete(d) {
+        if (!confirm('删除资料《' + d.filename + '》？7 天内可以在回收站恢复。')) return;
+        const resp = await api('/api/knowledge/documents/' + d.id, { method: 'DELETE' });
+        setKbMsg(resp.ok ? '已移入回收站' : await errorText(resp), resp.ok);
+        kbLastStatus.delete(d.id);
+        await refreshKnowledge();
+    }
+
+    kbUploadBtn.addEventListener('click', () => kbFile.click());
+
+    kbFile.addEventListener('change', async () => {
+        const files = [...kbFile.files];
+        // 清空选择：否则再次选择同一个文件时不会触发 change
+        kbFile.value = '';
+        if (!files.length) return;
+        kbUploadBtn.disabled = true;
+        const failures = [];
+        let uploaded = 0;
+        try {
+            for (const file of files) {
+                // 浏览器先挡一下，省得白传；真正的校验在后端
+                if (file.size > KB_MAX_BYTES) {
+                    failures.push('《' + file.name + '》超过 1 MB');
+                    continue;
+                }
+                setKbMsg('正在上传《' + file.name + '》…', true);
+                const form = new FormData();
+                form.append('file', file);
+                // 不要手动设置 Content-Type：浏览器会自动加上 multipart/form-data 和分隔符（boundary），
+                // 手动写死的话缺少 boundary，后端解析不出文件
+                const resp = await api('/api/knowledge/documents', { method: 'POST', body: form });
+                if (resp.ok) {
+                    const d = await resp.json();
+                    kbLastStatus.set(d.id, d.status);
+                    uploaded++;
+                } else {
+                    failures.push('《' + file.name + '》' + await errorText(resp));
+                }
+            }
+        } finally {
+            kbUploadBtn.disabled = false;
+        }
+        if (failures.length) {
+            setKbMsg((uploaded ? '已上传 ' + uploaded + ' 个文件。\n' : '') + failures.join('\n'), false);
+        } else {
+            setKbMsg('已上传 ' + uploaded + ' 个文件，正在处理，可以先关掉窗口，处理完会提示你', true);
+        }
+        await refreshKnowledge();
+        startKbPolling();
+    });
+
+    document.querySelectorAll('#knowledge .kb-tabs button').forEach(btn => btn.addEventListener('click', () => {
+        kbTab = btn.dataset.tab;
+        document.querySelectorAll('#knowledge .kb-tabs button').forEach(b => b.classList.toggle('active', b === btn));
+        kbUploadBtn.hidden = kbTab === 'trash';
+        setKbMsg('', true);
+        refreshKnowledge();
+    }));
+
+    document.getElementById('open-knowledge').addEventListener('click', () => {
+        kbTab = 'active';
+        document.querySelectorAll('#knowledge .kb-tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === 'active'));
+        kbUploadBtn.hidden = false;
+        setKbMsg('', true);
+        kbList.innerHTML = '';
+        kbDialog.showModal();
+        refreshKnowledge();
+    });
+
+    document.getElementById('kb-close').addEventListener('click', () => kbDialog.close());
+
+    // ---- 处理状态轮询 ----
+    // 只有存在“处理中”的资料时才轮询，全部处理完就停；间隔先快后慢：2 秒起，每次乘 1.5，最慢 15 秒。
+    // 处理一般几秒就完成；遇到失败重试要等几分钟时，也不会一直高频请求。
+    // 窗口关掉后轮询照样继续，处理完用右上角的弹窗告诉用户。
+
+    function startKbPolling() {
+        clearTimeout(kbPollTimer);
+        kbPollDelay = 2000;
+        kbPollTimer = setTimeout(pollKnowledge, kbPollDelay);
+    }
+
+    async function pollKnowledge() {
+        kbPollTimer = null;
+        let docs;
+        try {
+            docs = await fetchDocuments(false);
+        } catch (e) {
+            // 网络抖动：还有处理中的资料就稍后再试
+            if ([...kbLastStatus.values()].includes('PROCESSING')) {
+                kbPollTimer = setTimeout(pollKnowledge, kbPollDelay);
+            }
+            return;
+        }
+        noticeStatusChanges(docs);
+        if (kbDialog.open && kbTab === 'active') renderKnowledge(docs);
+        if (docs.some(d => d.status === 'PROCESSING')) {
+            kbPollDelay = Math.min(kbPollDelay * 1.5, 15000);
+            kbPollTimer = setTimeout(pollKnowledge, kbPollDelay);
+        }
+    }
+
+    /**
+     * 发现“处理中 → 可用 / 失败”的变化时提示用户。窗口开着时列表里就能看到，不用再弹。
+     * 处理完成只是告知，5 秒后自动消失；处理失败需要用户去处理，一直保留到手动关闭。
+     */
+    function noticeStatusChanges(docs) {
+        for (const d of docs) {
+            const before = kbLastStatus.get(d.id);
+            if (before === 'PROCESSING' && d.status !== 'PROCESSING' && !kbDialog.open) {
+                if (d.status === 'READY') {
+                    showToast('资料《' + d.filename + '》处理完成，可以提问了', 5000);
+                } else if (d.status === 'FAILED') {
+                    showToast('资料《' + d.filename + '》处理失败，可以在“资料”里重试');
+                }
+            }
+            kbLastStatus.set(d.id, d.status);
+        }
+    }
+
     // ---------------- 提醒通知 ----------------
     // 每 30 秒问一次服务器有没有新通知（轮询）。实现简单，代价是最多延迟 30 秒；
     // 想要实时推送可以换成 SSE 或 WebSocket 长连接。
 
-    function showToast(text) {
+    /**
+     * 右上角弹窗。autoCloseMs：几毫秒后自动消失，适合“处理完成”这类只是告知的消息；
+     * 不传则一直显示到用户手动关闭，提醒到点、操作失败这类错过有代价的消息用这种
+     */
+    function showToast(text, autoCloseMs) {
         const box = document.createElement('div');
         box.className = 'toast';
         const span = document.createElement('span');
@@ -645,6 +929,7 @@
         close.addEventListener('click', () => box.remove());
         box.append(span, close);
         document.getElementById('toasts').appendChild(box);
+        if (autoCloseMs) setTimeout(() => box.remove(), autoCloseMs);
     }
 
     async function pollNotifications() {
@@ -692,6 +977,8 @@
         loadConversations().catch(() => {});
         pollNotifications();
         setInterval(pollNotifications, 30_000);
+        // 刷新页面时如果还有资料在处理，接着轮询
+        pollKnowledge();
     }
 </script>
 </body>
