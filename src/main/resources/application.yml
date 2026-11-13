@@ -13,6 +13,16 @@ spring:
     async:
       # 流式接口是异步请求，给足时间，避免长回复被中途断开
       request-timeout: 180s
+  flyway:
+    # 迁移脚本在 classpath:db/migration（默认位置），只作用于主数据源 MySQL；
+    # PostgreSQL 的向量表仍由 Docker 第一次启动时执行 db/vector/schema.sql 创建
+    #
+    # 接入 Flyway 时库里已经有表了（之前手动执行过 V2～V5），但还没有 Flyway 的历史表 flyway_schema_history。
+    # 这种情况 Flyway 默认拒绝启动：它不知道哪些脚本执行过，宁可不做也不乱猜。
+    # baseline：告诉它“现在已经是第 5 版”，它在历史表里记一笔，之后只执行 V6 及以后的脚本。
+    # 全新的空库不受影响，照常从 V5__baseline_schema.sql 开始执行
+    baseline-on-migrate: true
+    baseline-version: 5
   servlet:
     multipart:
       # 上传大小的“外层”限制。业务上限是 1 MB（KnowledgeService 里检查，能返回清楚的提示），

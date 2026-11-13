@@ -118,6 +118,17 @@
             <version>${mybatis-plus.version}</version>
         </dependency>
 
+        <!-- Flyway：应用启动时自动执行 db/migration 里还没执行过的迁移脚本。
+             Spring Boot 4 必须用这个 starter：只加 flyway-core 的话，应用照样启动、没有任何报错，但 Flyway 根本不会运行 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-flyway</artifactId>
+        </dependency>
+        <!-- Flyway 10 起，各数据库的支持拆成了单独的模块，MySQL 要额外引入 -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-mysql</artifactId>
+        </dependency>
         <!-- MySQL 驱动：只在运行时需要，所以 scope 是 runtime -->
         <dependency>
             <groupId>com.mysql</groupId>

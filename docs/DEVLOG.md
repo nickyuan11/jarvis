@@ -6,7 +6,7 @@
 - **记得你**：跨会话的长期记忆
 - **会主动**：每日简报、到点提醒
 
-## 当前状态（2026-11-04）
+## 当前状态（2026-11-13）
 
 | 模块 | 状态 |
 |---|---|
@@ -19,11 +19,11 @@
 | 工具调用：提醒事项、NBA、英雄联盟赛事 | ✅ 完成 |
 | 提醒的邮件推送 | ✅ 完成 |
 | 邮件发件箱（事务性 + 退避重试） | ✅ 完成 |
-| 开发环境 Docker 化（MySQL + Redis） | ✅ 完成 |
+| 开发环境 Docker 化（MySQL + Redis）+ Flyway 自动迁移 | ✅ 完成 |
 | 个人知识库（RAG）+ 长期记忆 | 🚧 进行中：知识库已可用（上传、处理、检索、资料页面），下一步长期记忆 |
 | 每日简报、语音、部署上线 | 📅 第 5 周 |
 
-**技术栈**：Java 21 · Spring Boot 4.0.8 · Spring AI 2.0.2 · Spring Security · JJWT 0.13 · MyBatis-Plus 3.5.17 · MySQL 8.4 · PostgreSQL 17 + pgvector · Redis 7 · Docker · DeepSeek · 阿里云百炼（Embedding）
+**技术栈**：Java 21 · Spring Boot 4.0.8 · Spring AI 2.0.2 · Spring Security · JJWT 0.13 · MyBatis-Plus 3.5.17 · Flyway · MySQL 8.4 · PostgreSQL 17 + pgvector · Redis 7 · Docker · DeepSeek · 阿里云百炼（Embedding）
 
 ---
 
@@ -381,10 +381,41 @@
 **验证**
 - 上传后状态自动从“处理中”变成“可用”；上传后马上关掉窗口，处理完成时弹出提示并 5 秒后消失；重复上传提示“已经上传过了”；删除、回收站、恢复都正常。开发者工具的网络面板里能看到处理期间轮询很密，处理完就停了。
 
+## 2026-11-13（周五）：接入 Flyway
+
+**成果**
+- 应用启动时由 Flyway 自动执行 `db/migration` 里还没执行过的迁移脚本，不用再手动 `docker cp` + `docker exec`。
+- 旧的 V2～V5 和最初的 `schema.sql` 合并成一个完整脚本 `V5__baseline_schema.sql`；旧脚本存档到 `docs/migrations-before-flyway/`。表结构从此只有一个来源。
+- `compose.yaml` 里 MySQL 不再挂载建表脚本，只负责建库、建账号；PostgreSQL 的向量表仍由 Docker 初始化（Spring AI 规定的固定格式，很少变动）。
+
+**原理**
+- Flyway 不看 MySQL 的执行日志，也不分析现有表结构（从表结构推断不出哪些脚本执行过，比如只改了注释、只更新了数据的脚本），**只相信自己的历史表** `flyway_schema_history`：执行一个脚本记一行（版本、校验和、是否成功），启动时没记录的就执行。
+- 库是空的：建历史表，按版本顺序全部执行。库里有表却没有历史表：**拒绝启动**，宁可不做也不乱猜。
+- **baseline（基线）**：告诉 Flyway “现在已经是第 N 版”，它记一笔，之后只执行比 N 新的脚本。现有的库设置 `baseline-on-migrate: true`、`baseline-version: 5`。
+- Spring Boot 会让所有用到数据库的组件等 Flyway 迁移完再创建，保证应用用到的一定是最新的表结构。
+
+**设计讨论**
+- **为什么要合并（squash）**：`db/migration` 里只有 V2～V5，没有 V1。在全新的空库上，Flyway 从 V2 开始执行，第一句 `ALTER TABLE user` 就会因为表不存在而失败。所以把完整表结构作为起点。
+- **为什么叫 V5 而不是 V1**：版本号和开发日志里的记录连得上，长期记忆的新表就是 V6；不会出现“V2 在日志里指邮箱字段，在 Flyway 里却指别的东西”的混乱。Flyway 不要求版本号从 1 开始。
+- 已经执行过的脚本不能再改（Flyway 会校验内容）；MySQL 的 DDL 不能回滚，一个脚本里前几条成功、后面失败会留下半成品，所以一个脚本只做一件事。
+
+**踩过的坑**
+- **Spring Boot 4 必须用 `spring-boot-starter-flyway`**：只加 `flyway-core` 的话，应用照样启动、没有任何报错，但 Flyway 根本不会运行。所以验证时一定要在日志里亲眼看到 Flyway 的输出。另外，Flyway 10 起 MySQL 支持拆到了 `flyway-mysql` 模块。
+- **启动报 `Communications link failure`**：看最里层的原因，是连不上 MySQL（电脑重启后 Docker Desktop 没开）。报错出现在 Flyway 只是因为它第一个去连数据库。`Communications link failure` 是网络层面的失败，账号密码错了会是 `Access denied`。
+- **PowerShell 5.1 会吞掉参数里嵌着的双引号**：`docker exec ... sh -c '... -e "SELECT ..."'` 传进容器时变成了 `-e SELECT ...`，MySQL 只收到一个单词，报语法错误。之前导入数据的命令碰巧没出问题，是因为被引号包着的密码里没有空格。PowerShell 7.3 修复了这个问题；改用 `docker exec -it jarvis-mysql mysql -uroot -p jarvis` 进入交互式命令行，或者直接用 DataGrip。
+- 修改 `compose.yaml` 后执行 `docker compose up -d`，MySQL 容器被自动重建，数据在 volume 里不受影响。
+
+**学到的**
+- 环境变量会按“宽松绑定”转换成配置项：`SPRING_DATASOURCE_URL` 对应 `spring.datasource.url`，优先级比 yml 高。部署时密码、地址一般都这样传入。
+- MySQL 账号名不带主机部分时默认是 `'%'`，`GRANT ... TO jarvis` 就是 `'jarvis'@'%'`。
+
+**验证**
+- 现有的库：第一次启动日志显示 `Successfully baselined schema with version: 5`，历史表里一行 `BASELINE`；再次启动显示 `up to date`。
+- 模拟新电脑：新建空库 `jarvis_fresh`，用环境变量让应用连它，Flyway 执行了 `V5__baseline_schema.sql`，建好了所有表，历史表里的类型是 `SQL`。
+
 ---
 
 ## 下一步
 
 1. 回答里的引用可以点击查看原文：现在检索结果只在后端交给模型，需要在流式接口里把引用的资料也推给前端。
-2. 接入 Flyway：现在每个迁移脚本（V2～V5）都要手动 `docker cp` + `docker exec` 执行，改为应用启动时自动执行。
-3. 长期记忆。
+2. 长期记忆：新表从 V6 开始。

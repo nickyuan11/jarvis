@@ -1,4 +1,13 @@
--- Jarvis 建表脚本：在 jarvis 库里手动执行一次
+-- Jarvis 业务库（MySQL）的完整表结构，由 Flyway 在应用启动时自动执行。
+--
+-- 为什么叫 V5、而且是一个完整的建表脚本？
+-- 接入 Flyway 之前，表结构变更靠手动执行 V2～V5 四个脚本（已存档到 docs/migrations-before-flyway/）。
+-- 接入时把它们“压缩”（squash）成这一个完整脚本，版本号沿用 5，和开发日志里的记录对得上：
+-- - 全新的空库：Flyway 执行这个脚本，建好所有表；
+-- - 已经手动执行过 V2～V5 的库：application.yml 里 baseline-version 设为 5，Flyway 只记下“已经是第 5 版”，不会执行它。
+--
+-- 以后的表结构变更：新建 V6__xxx.sql、V7__xxx.sql……不要再修改这个文件，也不要修改任何已经执行过的脚本
+-- （Flyway 会校验已执行脚本的内容，被改过就拒绝启动）。
 -- 约定：表名、字段名用下划线（snake_case），Java 里用驼峰（camelCase），MyBatis-Plus 会自动对应
 
 CREATE TABLE IF NOT EXISTS `user` (
