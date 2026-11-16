@@ -7,7 +7,7 @@ import org.springframework.stereotype.Component;
 import com.nick.jarvis.sports.NbaService;
 
 /**
- * 交给大模型使用的 NBA 查询工具。比分、数据必须来自工具，不能让模型凭记忆回答。
+ * 交给大模型使用的 NBA 查询工具。比分、数据必须来自工具，不能让模型凭自己的知识回答。
  */
 @Component
 public class NbaTools {

@@ -37,7 +37,7 @@ public class KnowledgeTools {
 
     @Tool(description = """
             在用户上传的个人资料（知识库）里搜索相关内容。
-            用户问到自己的资料、文档、笔记、合同里的内容，或者说“根据我的资料”“我上传的……”时，先用它搜索，不要凭记忆回答。
+            用户问到自己的资料、文档、笔记、合同里的内容，或者说“根据我的资料”“我上传的……”时，先用它搜索，不要凭自己的知识回答。
             query 要改写成独立、完整的检索语句：结合上下文补全“那个”“它”等指代，写清楚要找什么，
             例如上文在聊租房合同，用户问“那违约金呢”，query 写成“租房合同 违约金”。
             一次没找到，可以换个说法再搜一次。""")
@@ -83,7 +83,7 @@ public class KnowledgeTools {
      */
     static String format(SearchResult result) {
         if (result.searchedDocuments() == 0) {
-            return "用户还没有可以检索的资料（可能还没上传，或者还在处理中）。请如实告诉用户，不要凭记忆回答。";
+            return "用户还没有可以检索的资料（可能还没上传，或者还在处理中）。请如实告诉用户，不要凭自己的知识回答。";
         }
         StringBuilder sb = new StringBuilder();
         if (result.note() != null) {
@@ -91,7 +91,7 @@ public class KnowledgeTools {
         }
         List<Hit> hits = result.hits();
         if (hits.isEmpty()) {
-            sb.append("在用户的资料里没有找到相关内容。请如实告诉用户没找到，不要凭记忆或常识补充；")
+            sb.append("在用户的资料里没有找到相关内容。请如实告诉用户没找到，不要凭自己的知识或常识补充；")
                     .append("如果觉得是检索词的问题，可以换个说法再搜一次。");
             return sb.toString();
         }

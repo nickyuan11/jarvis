@@ -15,7 +15,7 @@ class KnowledgeToolsTest {
     void noDocumentsTellsTheModelNotToGuess() {
         String text = KnowledgeTools.format(new SearchResult(List.of(), 0, null));
 
-        assertThat(text).contains("还没有可以检索的资料", "不要凭记忆");
+        assertThat(text).contains("还没有可以检索的资料", "不要凭自己的知识");
     }
 
     @Test
@@ -23,7 +23,7 @@ class KnowledgeToolsTest {
         // 返回空字符串的话，模型分不清是没查到还是出错了；要明确说“没找到”
         String text = KnowledgeTools.format(new SearchResult(List.of(), 2, null));
 
-        assertThat(text).contains("没有找到相关内容", "不要凭记忆");
+        assertThat(text).contains("没有找到相关内容", "不要凭自己的知识");
     }
 
     @Test

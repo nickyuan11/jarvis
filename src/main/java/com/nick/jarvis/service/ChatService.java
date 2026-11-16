@@ -32,7 +32,9 @@ import com.nick.jarvis.mapper.MessageMapper;
 import com.nick.jarvis.ratelimit.RateLimiter;
 import com.nick.jarvis.security.CurrentUser;
 import com.nick.jarvis.support.JarvisTime;
+import com.nick.jarvis.memory.MemoryService;
 import com.nick.jarvis.tools.KnowledgeTools;
+import com.nick.jarvis.tools.MemoryTools;
 import com.nick.jarvis.tools.LolTools;
 import com.nick.jarvis.tools.NbaTools;
 import com.nick.jarvis.tools.ReminderTools;
@@ -65,6 +67,7 @@ public class ChatService {
     private final int historySize;
     /** 交给大模型的工具 */
     private final Object[] tools;
+    private final MemoryService memoryService;
 
     public ChatService(ChatClient.Builder chatClientBuilder,
                        ConversationMapper conversationMapper,
@@ -75,6 +78,8 @@ public class ChatService {
                        NbaTools nbaTools,
                        LolTools lolTools,
                        KnowledgeTools knowledgeTools,
+                       MemoryTools memoryTools,
+                       MemoryService memoryService,
                        @Value("${jarvis.chat.system-prompt}") String systemPrompt,
                        @Value("${jarvis.chat.history-size:20}") int historySize) {
         this.chatClient = chatClientBuilder.build();
@@ -84,13 +89,19 @@ public class ChatService {
         this.time = time;
         this.systemPrompt = systemPrompt;
         this.historySize = historySize;
-        this.tools = new Object[] {reminderTools, nbaTools, lolTools, knowledgeTools};
+        this.tools = new Object[] {reminderTools, nbaTools, lolTools, knowledgeTools, memoryTools};
+        this.memoryService = memoryService;
     }
 
     /**
      * 每次请求都准备一个新的 prompt：
      * - 系统提示词里带上当前时间。大模型不知道“现在”是什么时候，不告诉它，它就没法把“明天下午”换算成具体日期；
-     * - 注册工具，并通过 toolContext 把当前用户 id 传给工具。
+     * - 系统提示词里带上用户的长期记忆；
+     * - 注册工具，并通过 toolContext 把当前用户 id、会话 id 传给工具。
+     *
+     * 系统提示词的拼接顺序：固定规则 → 记忆 → 当前时间。
+     * DeepSeek 有上下文缓存：请求开头和之前完全相同的部分，计费更便宜、处理更快。缓存只认“从开头起完全相同”，
+     * 当前时间每分钟都在变，必须放在最后；记忆很少变化，放在它前面，就能和固定规则一起被缓存。
      */
     private ChatClient.ChatClientRequestSpec newPrompt(Prepared prepared) {
         var now = time.zonedNow();
@@ -98,10 +109,11 @@ public class ChatService {
                 + "，" + now.getDayOfWeek().getDisplayName(TextStyle.FULL, Locale.CHINA)
                 + "（" + time.zone() + "）";
         return chatClient.prompt()
-                .system(systemPrompt + timeLine)
+                .system(systemPrompt + memoryService.promptSection(prepared.userId()) + timeLine)
                 .messages(prepared.history())
                 .tools(tools)
-                .toolContext(Map.of(ToolContextKeys.USER_ID, prepared.userId()));
+                .toolContext(Map.of(ToolContextKeys.USER_ID, prepared.userId(),
+                        ToolContextKeys.CONVERSATION_ID, prepared.conversationId()));
     }
 
     /** 一次性返回完整回复 */

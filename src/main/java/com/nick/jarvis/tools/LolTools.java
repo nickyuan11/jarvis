@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component;
 import com.nick.jarvis.sports.LolService;
 
 /**
- * 交给大模型使用的英雄联盟赛事工具。赛果必须来自工具，不能凭记忆回答。
+ * 交给大模型使用的英雄联盟赛事工具。赛果必须来自工具，不能凭自己的知识回答。
  */
 @Component
 public class LolTools {
