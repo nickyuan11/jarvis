@@ -1,8 +1,14 @@
 # Caddy：反向代理 + 自动 HTTPS。
 # 它会自动向 Let's Encrypt 申请证书并定期续期，前提是域名已经解析到这台服务器，且 80、443 端口对外开放。
-# {$DOMAIN} 取自环境变量（.env 里的 DOMAIN）
+# {$DOMAIN} 取自环境变量（.env 里的 DOMAIN），例如 nickyuan.cn。
+# 注意：域名解析里要有主机记录 @（根域名）和 www 两条 A 记录，都指向服务器 IP
 {$DOMAIN} {
 	# 把请求转发给应用容器。流式回复（SSE）Caddy 会自动识别并立即转发，不会攒着
 	reverse_proxy app:8080
 	encode gzip
+}
+
+# 访问 www.域名 时，永久跳转（301）到不带 www 的地址，两个地址都能用，最终统一在一个上
+www.{$DOMAIN} {
+	redir https://{$DOMAIN}{uri} permanent
 }
