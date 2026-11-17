@@ -115,6 +115,12 @@ jarvis:
     dimensions: 1024
     # 打开后，启动时跑一遍向量库冒烟测试（VectorSmokeTest），验证完记得关掉
     smoke-test: false
+  memory:
+    extraction:
+      # 后台从对话里提取长期记忆。关掉后只有用户明确说“记住……”才会记
+      enabled: true
+      # 会话多久没有新消息，才算“聊完了”可以提取。测试时可以在 application-local.yml 里改成 1m
+      idle: 10m
   knowledge:
     # 检索时最多取几块资料。太多会占上下文、增加费用，太少可能漏掉答案
     top-k: 5

@@ -47,16 +47,7 @@ public class MemoryService {
      * @param conversationId 来自哪个会话，可以为空
      */
     public UserMemory remember(Long userId, String content, String type, String source, Long conversationId) {
-        String text = content == null ? "" : content.strip();
-        if (text.isEmpty()) {
-            throw new IllegalArgumentException("记忆内容不能为空");
-        }
-        if (text.length() > MAX_LENGTH) {
-            throw new IllegalArgumentException("一条记忆不能超过 " + MAX_LENGTH + " 个字，请精简后再记");
-        }
-        if (SensitiveInfoFilter.containsSensitiveInfo(text)) {
-            throw new IllegalArgumentException("银行卡号、身份证号、密码这类敏感信息不能保存到记忆里，即使用户要求也不行");
-        }
+        String text = validate(content);
         String memoryType = parseType(type);
 
         UserMemory existing = mapper.selectOne(new LambdaQueryWrapper<UserMemory>()
@@ -79,6 +70,43 @@ public class MemoryService {
         memory.setConversationId(conversationId);
         mapper.insert(memory);
         return memory;
+    }
+
+    /**
+     * 改写一条已有的记忆（后台提取发现它过时了）。type 为空时保持原来的类型。
+     * 和新增走同样的校验：敏感信息不会因为是“更新”就漏过去。
+     */
+    public UserMemory update(Long userId, Long memoryId, String content, String type) {
+        String text = validate(content);
+        UserMemory memory = memoryId == null ? null : mapper.selectById(memoryId);
+        if (memory == null || !userId.equals(memory.getUserId())) {
+            throw new IllegalArgumentException("找不到编号为 " + memoryId + " 的记忆");
+        }
+        String memoryType = type == null || type.isBlank() ? memory.getType() : parseType(type);
+        // 新建一个只带要改的字段的对象：updateById 只更新非空字段，update_time 由自动填充写入
+        UserMemory update = new UserMemory();
+        update.setId(memoryId);
+        update.setContent(text);
+        update.setType(memoryType);
+        mapper.updateById(update);
+        memory.setContent(text);
+        memory.setType(memoryType);
+        return memory;
+    }
+
+    /** 新增和更新共用的内容校验，返回去掉首尾空白后的内容 */
+    private static String validate(String content) {
+        String text = content == null ? "" : content.strip();
+        if (text.isEmpty()) {
+            throw new IllegalArgumentException("记忆内容不能为空");
+        }
+        if (text.length() > MAX_LENGTH) {
+            throw new IllegalArgumentException("一条记忆不能超过 " + MAX_LENGTH + " 个字，请精简后再记");
+        }
+        if (SensitiveInfoFilter.containsSensitiveInfo(text)) {
+            throw new IllegalArgumentException("银行卡号、身份证号、密码这类敏感信息不能保存到记忆里，即使用户要求也不行");
+        }
+        return text;
     }
 
     /** 忘掉一条（物理删除）。“不存在”和“不属于你”给出同样的提示，和其他地方的越权校验一致 */

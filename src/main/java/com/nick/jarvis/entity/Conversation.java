@@ -22,6 +22,9 @@ public class Conversation {
 
     private String title;
 
+    /** 长期记忆的后台提取已经处理到哪一条消息（水位线），见 MemoryExtractor */
+    private Long memoryExtractedMessageId;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;
 
