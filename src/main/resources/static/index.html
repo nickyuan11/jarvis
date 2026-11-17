@@ -126,6 +126,25 @@
         .kb-status.READY { color: var(--accent); border-color: var(--accent); }
         .kb-status.FAILED { color: var(--error); border-color: var(--error); }
         #kb-msg { white-space: pre-line; }
+        /* ---------- 记忆窗口 ---------- */
+        /* 左下角的按钮变多了，放不下时换到下一行 */
+        .aside-foot { flex-wrap: wrap; }
+        #memory { width: min(560px, calc(100vw - 32px)); }
+        .mem-add { display: flex; gap: 8px; margin-bottom: 10px; }
+        .mem-add input, .mem-add select {
+            font: inherit; color: var(--text); background: var(--bg);
+            border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px;
+        }
+        .mem-add input { flex: 1; min-width: 0; }
+        #mem-add { background: var(--accent); color: #fff; border-color: var(--accent); flex-shrink: 0; }
+        #mem-list { list-style: none; margin: 0; padding: 0; max-height: min(50vh, 420px); overflow-y: auto; border-top: 1px solid var(--line); }
+        #mem-list li { display: flex; align-items: center; gap: 10px; padding: 9px 2px; border-bottom: 1px solid var(--line); font-size: 14px; }
+        #mem-list li.mem-group { color: var(--muted); font-size: 12px; padding: 12px 2px 6px; border-bottom: none; }
+        #mem-list li.mem-empty { justify-content: center; color: var(--muted); font-size: 13px; padding: 22px 2px; }
+        #mem-list .info { flex: 1; min-width: 0; }
+        #mem-list .text { word-break: break-word; line-height: 1.5; }
+        #mem-list .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+        #mem-list button { padding: 3px 9px; font-size: 13px; flex-shrink: 0; }
         /* ---------- 右侧聊天区 ---------- */
         .chat { flex: 1; min-width: 0; display: flex; flex-direction: column; }
         #toggle-aside { display: none; }
@@ -277,6 +296,23 @@
         <div class="actions"><span></span><button type="button" id="kb-close">关闭</button></div>
     </form>
 </dialog>
+<dialog id="memory">
+    <form method="dialog">
+        <h2>Jarvis 记得的事</h2>
+        <p class="desc">这些信息会在每次对话时提供给 Jarvis，让它更了解你。除了你让它记住的，它也会在聊天结束后自动记下一些。你可以随时添加或删除；删除后 Jarvis 就不再知道这件事。银行卡号、身份证号、密码不会被保存。</p>
+        <div class="mem-add">
+            <input type="text" id="mem-input" maxlength="100" placeholder="例如：对花生过敏" autocomplete="off">
+            <select id="mem-type" title="类型">
+                <option value="FACT">关于我</option>
+                <option value="PREFERENCE">回答方式</option>
+            </select>
+            <button type="button" id="mem-add">添加</button>
+        </div>
+        <ul id="mem-list"></ul>
+        <div class="msg" id="mem-msg"></div>
+        <div class="actions"><span></span><button type="button" id="mem-close">关闭</button></div>
+    </form>
+</dialog>
 <aside id="aside">
     <div class="aside-head"><button id="new-chat" type="button">＋ 新对话</button></div>
     <ul id="conv-list"></ul>
@@ -284,6 +320,7 @@
         <span id="user-name"></span>
         <span class="foot-actions">
             <button id="open-knowledge" type="button">资料</button>
+            <button id="open-memory" type="button">记忆</button>
             <button id="open-settings" type="button">设置</button>
             <button id="logout" type="button">退出</button>
         </span>
@@ -908,6 +945,111 @@
             kbLastStatus.set(d.id, d.status);
         }
     }
+
+    // ---------------- 记忆 ----------------
+    const memDialog = document.getElementById('memory');
+    const memList = document.getElementById('mem-list');
+    const memMsg = document.getElementById('mem-msg');
+    const memInput = document.getElementById('mem-input');
+    const MEM_GROUPS = [['PREFERENCE', '对回答方式的要求（每次回答都会遵守）'], ['FACT', '关于你的事（相关时会参考）']];
+
+    function setMemMsg(text, ok) {
+        memMsg.textContent = text;
+        memMsg.className = 'msg ' + (ok ? 'ok' : 'err');
+    }
+
+    async function refreshMemories() {
+        const resp = await api('/api/memories');
+        if (!resp.ok) {
+            setMemMsg(await errorText(resp), false);
+            return;
+        }
+        renderMemories(await resp.json());
+    }
+
+    function renderMemories(list) {
+        memList.innerHTML = '';
+        if (!list.length) {
+            const li = document.createElement('li');
+            li.className = 'mem-empty';
+            li.textContent = 'Jarvis 还没有记住任何事';
+            memList.appendChild(li);
+            return;
+        }
+        for (const [type, label] of MEM_GROUPS) {
+            const items = list.filter(m => m.type === type);
+            if (!items.length) continue;
+            const head = document.createElement('li');
+            head.className = 'mem-group';
+            head.textContent = label;
+            memList.appendChild(head);
+            for (const m of items) memList.appendChild(memItem(m));
+        }
+    }
+
+    /** 一条记忆。内容可能来自模型的提取，一律用 textContent 显示 */
+    function memItem(m) {
+        const li = document.createElement('li');
+        const info = document.createElement('div');
+        info.className = 'info';
+        const text = document.createElement('div');
+        text.className = 'text';
+        text.textContent = m.content;
+        const sub = document.createElement('div');
+        sub.className = 'sub';
+        // 告诉用户这条是怎么来的：自己让记的，还是 Jarvis 从聊天里自动记下的
+        sub.textContent = (m.source === 'EXTRACTED' ? '从聊天中自动记下' : '你让 Jarvis 记住的')
+            + ' · ' + formatTime(m.updateTime).slice(0, 10);
+        info.append(text, sub);
+        li.append(info, kbButton('删除', () => deleteMemory(m)));
+        return li;
+    }
+
+    async function deleteMemory(m) {
+        if (!confirm('让 Jarvis 忘掉「' + m.content + '」？删除后无法恢复。')) return;
+        const resp = await api('/api/memories/' + m.id, { method: 'DELETE' });
+        setMemMsg(resp.ok ? '已忘掉' : await errorText(resp), resp.ok);
+        await refreshMemories();
+    }
+
+    async function addMemory() {
+        const content = memInput.value.trim();
+        if (!content) {
+            setMemMsg('请先输入要记住的内容', false);
+            return;
+        }
+        const resp = await api('/api/memories', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content, type: document.getElementById('mem-type').value })
+        });
+        if (!resp.ok) {
+            // 校验都在后端（字数、条数上限、敏感信息），这里只负责把原因显示出来
+            setMemMsg(await errorText(resp), false);
+            return;
+        }
+        memInput.value = '';
+        setMemMsg('已记住', true);
+        await refreshMemories();
+    }
+
+    document.getElementById('mem-add').addEventListener('click', addMemory);
+    memInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            // 输入框在 <form method="dialog"> 里，回车默认会提交表单并关掉窗口，这里改成“添加”
+            e.preventDefault();
+            addMemory();
+        }
+    });
+
+    document.getElementById('open-memory').addEventListener('click', () => {
+        setMemMsg('', true);
+        memList.innerHTML = '';
+        memDialog.showModal();
+        refreshMemories();
+    });
+
+    document.getElementById('mem-close').addEventListener('click', () => memDialog.close());
 
     // ---------------- 提醒通知 ----------------
     // 每 30 秒问一次服务器有没有新通知（轮询）。实现简单，代价是最多延迟 30 秒；
