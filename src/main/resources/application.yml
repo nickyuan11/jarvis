@@ -55,7 +55,8 @@ spring:
       mail.smtp.writetimeout: 10000
   data:
     redis:
-      host: localhost
+      # 应用也跑在 Docker 里时，主机名是 Compose 里的服务名 redis
+      host: ${REDIS_HOST:localhost}
       port: 6379
   ai:
     retry:
@@ -126,11 +127,16 @@ jarvis:
     top-k: 5
     # 相似度门槛（0～1）：低于它的块视为不相关。参考冒烟测试，相关的约 0.7，无关的约 0.2
     similarity-threshold: 0.4
+  registration:
+    # 注册邀请码。留空表示开放注册（本地开发）；线上在 application-prod.yml 里强制要求配置
+    invite-code: ${INVITE_CODE:}
   rate-limit:
     chat:
       # 每个用户在一个时间窗口内最多发送多少条消息
       max-requests: 10
       window: 60s
+      # 每个用户 24 小时内最多发送多少条消息，给花费封顶；0 表示不限制
+      daily-max-requests: 200
   chat:
     # 每次请求带上最近多少条历史消息作为上下文
     history-size: 20
@@ -152,6 +158,12 @@ jarvis:
       你的知识有截止日期，球员转会、人事变动等近况可能已经过时。
       用户告诉你的近况和工具查到的结果，都比你训练时学到的知识更可信；不要用过时的知识去反驳用户。
       用户消息开头的“（发送于 …）”是系统自动加的发送时间，用来判断对话之间隔了多久；回复时不要复述它。
+
+logging:
+  level:
+    # 这两处的 debug 日志带有用户的检索词、模型提取记忆时的原始输出，方便本地调试；线上在 prod 配置里关掉
+    com.nick.jarvis.tools.KnowledgeTools: debug
+    com.nick.jarvis.memory.MemoryExtractionClient: debug
 
 mybatis-plus:
   configuration:

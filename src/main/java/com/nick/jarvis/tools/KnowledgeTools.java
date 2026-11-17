@@ -54,8 +54,8 @@ public class KnowledgeTools {
         Long userId = userId(toolContext);
         SearchResult result = searchService.search(userId, query.strip(), documentName);
         // 记下模型实际用的检索词，方便观察它有没有把“那违约金呢”这类问题改写完整。
-        // 检索词里可能有用户的隐私，上线后应该调成 debug 级别或去掉
-        log.info("searchKnowledge user={} query=\"{}\" documentName={} hits={}",
+        // 检索词里可能有用户的隐私，所以是 debug 级别：本地开发时打开（application.yml），线上不输出
+        log.debug("searchKnowledge user={} query=\"{}\" documentName={} hits={}",
                 userId, query.strip(), documentName, result.hits().size());
         return format(result);
     }

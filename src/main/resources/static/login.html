@@ -99,6 +99,9 @@
     <div class="register-only">
         <label for="nickname">昵称（可选）</label>
         <input id="nickname" autocomplete="nickname">
+        <label for="invite-code">邀请码</label>
+        <input id="invite-code" autocomplete="off">
+        <div class="field-hint">线上版本需要邀请码才能注册</div>
     </div>
 
     <label for="password">密码</label>
@@ -177,6 +180,7 @@
                 return;
             }
             body.nickname = document.getElementById('nickname').value.trim();
+            body.inviteCode = document.getElementById('invite-code').value.trim();
         }
 
         submitBtn.disabled = true;

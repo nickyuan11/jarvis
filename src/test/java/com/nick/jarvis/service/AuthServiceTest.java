@@ -55,7 +55,7 @@ class AuthServiceTest {
 
     @BeforeEach
     void setUp() {
-        authService = new AuthService(userMapper, passwordEncoder, jwtService, blacklist);
+        authService = new AuthService(userMapper, passwordEncoder, jwtService, blacklist, "");
     }
 
     @AfterEach
@@ -73,7 +73,7 @@ class AuthServiceTest {
             return 1;
         }).when(userMapper).insert(any(User.class));
 
-        AuthResponse response = authService.register("nick_yuan", "secret123", "Nick");
+        AuthResponse response = authService.register("nick_yuan", "secret123", "Nick", null);
 
         ArgumentCaptor<User> saved = ArgumentCaptor.forClass(User.class);
         verify(userMapper).insert(saved.capture());
@@ -88,7 +88,7 @@ class AuthServiceTest {
 
     @Test
     void nicknameDefaultsToUsername() {
-        AuthResponse response = authService.register("nick_yuan", "secret123", "  ");
+        AuthResponse response = authService.register("nick_yuan", "secret123", "  ", null);
 
         assertThat(response.user().nickname()).isEqualTo("nick_yuan");
     }
@@ -97,20 +97,20 @@ class AuthServiceTest {
     @ParameterizedTest
     @ValueSource(strings = {"nick yuan", "小克", "ab", "nick.yuan", "a_very_long_username_123"})
     void registerRejectsInvalidUsername(String username) {
-        assertStatus(() -> authService.register(username, "secret123", null), HttpStatus.BAD_REQUEST);
+        assertStatus(() -> authService.register(username, "secret123", null, null), HttpStatus.BAD_REQUEST);
         verify(userMapper, never()).insert(any(User.class));
     }
 
     @Test
     void registerRejectsShortPassword() {
-        assertStatus(() -> authService.register("nick_yuan", "12345", null), HttpStatus.BAD_REQUEST);
+        assertStatus(() -> authService.register("nick_yuan", "12345", null, null), HttpStatus.BAD_REQUEST);
     }
 
     @Test
     void registerRejectsTakenUsername() {
         when(userMapper.selectOne(any())).thenReturn(user(1L, "nick_yuan", "whatever"));
 
-        assertStatus(() -> authService.register("nick_yuan", "secret123", null), HttpStatus.CONFLICT);
+        assertStatus(() -> authService.register("nick_yuan", "secret123", null, null), HttpStatus.CONFLICT);
         verify(userMapper, never()).insert(any(User.class));
     }
 
@@ -119,7 +119,7 @@ class AuthServiceTest {
         // 检查时用户名还没被占用，插入时却撞上了唯一索引：模拟两个人同时注册
         doThrow(new DuplicateKeyException("uk_username")).when(userMapper).insert(any(User.class));
 
-        assertStatus(() -> authService.register("nick_yuan", "secret123", null), HttpStatus.CONFLICT);
+        assertStatus(() -> authService.register("nick_yuan", "secret123", null, null), HttpStatus.CONFLICT);
     }
 
     // ---------------- 登录 ----------------
@@ -184,5 +184,14 @@ class AuthServiceTest {
             return e.getReason();
         }
         throw new AssertionError("应该抛出 ResponseStatusException");
+    }
+
+    @Test
+    void registrationRequiresTheInviteCodeWhenOneIsConfigured() {
+        AuthService restricted = new AuthService(userMapper, passwordEncoder, jwtService, blacklist, "open-sesame");
+
+        // 邀请码错误或没填：403，而且在检查用户名之前就被拒绝
+        assertStatus(() -> restricted.register("nick_yuan", "secret123", null, "wrong"), HttpStatus.FORBIDDEN);
+        assertStatus(() -> restricted.register("nick_yuan", "secret123", null, null), HttpStatus.FORBIDDEN);
     }
 }

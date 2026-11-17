@@ -1,0 +1,122 @@
+# 线上环境：应用和中间件都在 Docker 里，一条命令全部启动。
+#   docker compose -f compose.prod.yaml up -d --build     构建镜像并启动
+#   docker compose -f compose.prod.yaml logs -f app       看应用日志
+#   docker compose -f compose.prod.yaml ps                看状态
+#
+# 第一次使用：把 .env.prod.example 复制成 .env，填好所有值，然后 chmod 600 .env
+#
+# 和本地的 compose.yaml 的区别：
+# - 多了应用本身（app）和反向代理（caddy）；
+# - 数据库、Redis 都不映射端口：容器之间在同一个网络里，用服务名互相访问（mysql:3306），公网上看不到它们；
+# - 对外只开放 80 和 443，由 Caddy 提供 HTTPS。
+services:
+  caddy:
+    image: caddy:2
+    container_name: jarvis-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?请在 .env 里设置 DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # 证书存在这里。不持久化的话每次重建容器都要重新申请，Let's Encrypt 有次数限制
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+    restart: unless-stopped
+
+  app:
+    build: .
+    image: jarvis-app
+    container_name: jarvis-app
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      # 堆内存上限。服务器 4 GB，还要留给 MySQL、PostgreSQL、Redis；
+      # 库里存的时间是 jarvis.time-zone 的时间，JVM 的默认时区也设成一致
+      JAVA_OPTS: -Xmx768m -Duser.timezone=Asia/Shanghai
+      # 主机名就是下面各个服务的名字
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USERNAME: jarvis
+      DB_PASSWORD: ${MYSQL_PASSWORD:?}
+      VECTOR_DB_HOST: postgres
+      VECTOR_DB_PASSWORD: ${POSTGRES_PASSWORD:?}
+      REDIS_HOST: redis
+      JWT_SECRET: ${JWT_SECRET:?请在 .env 里设置 JWT_SECRET}
+      INVITE_CODE: ${INVITE_CODE:?请在 .env 里设置 INVITE_CODE}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?请在 .env 里设置 DEEPSEEK_API_KEY}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:?请在 .env 里设置 EMBEDDING_API_KEY}
+      # 下面三个可选：不填则邮件提醒、英雄联盟赛事工具不可用，不影响启动
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      PANDASCORE_TOKEN: ${PANDASCORE_TOKEN:-}
+    depends_on:
+      # 等数据库真正可用（healthy）再启动应用，否则 Flyway 一上来就连不上
+      mysql:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.4
+    container_name: jarvis-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?}
+      MYSQL_DATABASE: jarvis
+      MYSQL_USER: jarvis
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: jarvis-postgres
+    environment:
+      POSTGRES_USER: jarvis
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: jarvis_vector
+      TZ: Asia/Shanghai
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./src/main/resources/db/vector/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jarvis -d jarvis_vector"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    container_name: jarvis-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  mysql-data:
+  postgres-data:
+  redis-data:
+  caddy-data:
+  caddy-config:

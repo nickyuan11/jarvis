@@ -1,0 +1,20 @@
+# 线上环境的配置，启动时用 SPRING_PROFILES_ACTIVE=prod 激活。
+# 这里只写“和本地不一样”的部分：先加载 application.yml，再用这里的同名配置覆盖。
+# 密码和 API Key 都不写在文件里，由服务器上的 .env 通过环境变量传入（见 compose.prod.yaml）。
+
+jarvis:
+  registration:
+    # 没有默认值：线上忘了配置邀请码，应用直接启动失败，而不是悄悄变成开放注册。
+    # 关键配置缺失时“失败关闭”，和 JWT 密钥的处理一致
+    invite-code: ${INVITE_CODE}
+
+logging:
+  level:
+    # 这两处的 debug 日志带有用户的检索词和记忆内容，线上不输出
+    com.nick.jarvis.tools.KnowledgeTools: info
+    com.nick.jarvis.memory.MemoryExtractionClient: info
+
+mybatis-plus:
+  configuration:
+    # 本地把每条 SQL 打印到控制台方便学习；线上会刷屏，而且 SQL 的参数里有用户数据
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl

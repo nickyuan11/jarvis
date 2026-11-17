@@ -25,7 +25,7 @@ class RateLimiterTest {
     private StringRedisTemplate redis;
 
     private RateLimiter rateLimiter() {
-        return new RateLimiter(redis, new RateLimitProperties(10, Duration.ofSeconds(60)));
+        return new RateLimiter(redis, new RateLimitProperties(10, Duration.ofSeconds(60), 0));
     }
 
     /** 模拟 Lua 脚本返回 {当前计数, 剩余秒数} */
@@ -51,6 +51,23 @@ class RateLimiterTest {
                 .isInstanceOfSatisfying(ResponseStatusException.class, e -> {
                     org.assertj.core.api.Assertions.assertThat(e.getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
                     org.assertj.core.api.Assertions.assertThat(e.getReason()).contains("42 秒");
+                });
+    }
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void rejectsRequestsOverTheDailyLimit() {
+        RateLimiter limiter = new RateLimiter(redis, new RateLimitProperties(10, Duration.ofSeconds(60), 200));
+        // 每分钟的限流通过了
+        redisReturns(1, 60);
+        // 但这是 24 小时内的第 201 条，计数器还有 2.5 小时过期
+        when(redis.execute(any(RedisScript.class), eq(List.of("jarvis:ratelimit:chat:daily:1")), eq("86400")))
+                .thenReturn((List) List.of(201L, 9000L));
+
+        assertThatThrownBy(() -> limiter.check(1L))
+                .isInstanceOfSatisfying(ResponseStatusException.class, e -> {
+                    org.assertj.core.api.Assertions.assertThat(e.getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+                    org.assertj.core.api.Assertions.assertThat(e.getReason()).contains("200 条", "3 小时");
                 });
     }
 }

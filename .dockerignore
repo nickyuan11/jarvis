@@ -1,0 +1,13 @@
+# 构建镜像时不发送给 Docker 的文件。
+# 最重要的是本地的私密配置：application-local.yml 在 src/main/resources 下，
+# 不排除的话会被打进 jar，密码和 API Key 就跟着镜像走了
+**/application-local.yml
+.env
+.env.*
+!.env.example
+!.env.prod.example
+.git
+.idea
+*.iml
+target
+docs

@@ -21,6 +21,8 @@ import org.springframework.web.server.ResponseStatusException;
 public class RateLimiter {
 
     private static final String KEY_PREFIX = "jarvis:ratelimit:chat:";
+    private static final String DAILY_KEY_PREFIX = "jarvis:ratelimit:chat:daily:";
+    private static final long DAY_SECONDS = 24 * 60 * 60;
 
     /**
      * 为什么用 Lua 脚本：INCR 和 EXPIRE 是两条命令。如果分开执行，
@@ -54,6 +56,27 @@ public class RateLimiter {
         if (count > properties.maxRequests()) {
             throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
                     "发送太频繁了，请 " + Math.max(ttl, 1) + " 秒后再试");
+        }
+        checkDaily(userId);
+    }
+
+    /**
+     * 每日上限：给每个用户一天的花费封顶。每分钟的限流防的是“刷得太快”，
+     * 但每分钟 10 条不停地发，一天也有一万多条；上线后必须再加一层总量限制。
+     * 窗口从当天第一条消息开始算 24 小时，复用同一个 Lua 脚本。
+     * 放在每分钟限流之后：被那一层拒绝的请求，不占每日的额度。
+     */
+    private void checkDaily(Long userId) {
+        if (properties.dailyMaxRequests() <= 0) {
+            return;
+        }
+        List<?> result = redis.execute(SCRIPT, List.of(DAILY_KEY_PREFIX + userId), String.valueOf(DAY_SECONDS));
+        long count = ((Number) result.get(0)).longValue();
+        long ttl = ((Number) result.get(1)).longValue();
+        if (count > properties.dailyMaxRequests()) {
+            long hours = Math.max((ttl + 3599) / 3600, 1);
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
+                    "今天的消息数已达上限（" + properties.dailyMaxRequests() + " 条），请约 " + hours + " 小时后再试");
         }
     }
 }

@@ -85,8 +85,8 @@ public class MemoryExtractionClient {
                 .content();
         List<Operation> operations = parse(output);
         // 打印模型的原始输出：调提示词、排查“为什么没记”时要看它。
-        // 里面可能有用户的隐私，上线后应该调成 debug 级别
-        log.info("Memory extraction model output ({} operations parsed):\n{}", operations.size(), output);
+        // 里面可能有用户的隐私，所以是 debug 级别：本地开发时打开（application.yml），线上不输出
+        log.debug("Memory extraction model output ({} operations parsed):\n{}", operations.size(), output);
         return operations;
     }
 
