@@ -22,7 +22,8 @@
 | 开发环境 Docker 化（MySQL + Redis）+ Flyway 自动迁移 | ✅ 完成 |
 | 个人知识库（RAG） | ✅ 完成 |
 | 长期记忆（工具 + 后台提取 + 记忆页面） | ✅ 完成 |
-| 每日简报、语音、部署上线 | 📅 第 5 周 |
+| 部署上线（https://nickyuan.cn） | ✅ 完成 |
+| 每日简报、语音 | 📅 第 5 周 |
 
 **技术栈**：Java 21 · Spring Boot 4.0.8 · Spring AI 2.0.2 · Spring Security · JJWT 0.13 · MyBatis-Plus 3.5.17 · Flyway · MySQL 8.4 · PostgreSQL 17 + pgvector · Redis 7 · Docker · DeepSeek · 阿里云百炼（Embedding）
 
@@ -497,11 +498,47 @@
 **验证**
 - 窗口里能看到之前的记忆和来源；手动添加后立即出现；添加银行卡号被拒绝并提示原因；删除后消失；新对话里问“你记得我什么”，回答和窗口内容一致。
 
+## 2026-11-17（周二）：部署上线
+
+**成果**
+- Jarvis 上线了：**https://nickyuan.cn**。阿里云轻量应用服务器（国际型，2 核 4 G，Ubuntu 24.04），应用和 MySQL、PostgreSQL、Redis 都跑在 Docker 里，一条命令启动。
+- 上线前加了两道限制：**邀请码注册**、**每人每天最多 200 条消息**。
+
+**上线前的设计讨论**
+- **任何人都能打开网址之后，最大的风险是有人刷爆 API 的钱**：每次对话、每次向量化花的都是服务器配置的 Key。考虑过 BYOK（用户自己填 API Key），但要替用户加密保管 Key，而且门槛太高，面试官想试一下都得先去注册充值。最终选择邀请码 + 每日上限。
+- 邀请码在线上没有默认值（`${INVITE_CODE}`），忘了配置就启动失败，而不是悄悄变成开放注册（失败关闭）；比较时用恒定时间的 `MessageDigest.isEqual`，防时序攻击。
+- **密码和 Key 放在服务器的 `.env`，通过环境变量传给应用**，`application-local.yml` 不上传。和配置中心比：能读到 `.env` 的人已经登录了服务器，那时什么方案都保不住；配置中心解决的是几十个服务共享和轮换配置的问题。重点是三条：不进 Git、不打进镜像、文件权限 600。
+- **本地和线上的差异用 Spring profile**：`application-prod.yml` 只写不一样的部分（关掉 SQL 打印、带用户内容的 debug 日志），用 `SPRING_PROFILES_ACTIVE=prod` 激活。日志不是“全打或不打”，而是按级别控制。
+- **线上数据库不映射端口**：容器在同一个 Compose 网络里用服务名互相访问（`mysql:3306`），对外只开放 80、443。
+
+**部署文件**
+- `Dockerfile`：多阶段构建，第一阶段用 Maven 镜像打包，最终镜像只有 JRE 和 jar，用普通用户运行。
+- `.dockerignore`：排除 `application-local.yml`（它在 `src/main/resources` 下，不排除就会被打进 jar，密码和 Key 跟着镜像走）。
+- `compose.prod.yaml`：应用 + Caddy + 三个中间件，应用等数据库 `healthy` 后再启动。
+- `Caddyfile`：反向代理，自动向 Let's Encrypt 申请和续期 HTTPS 证书；`www` 跳转到根域名。
+
+**服务器选型**
+- 选海外机房（东京）：域名解析到中国内地的服务器必须先备案，海外买完就能用。
+- 选国际型而不是通用型：同一机房里配置差不多，差价主要在面向中国内地的网络线路；Jarvis 主要在东京使用，国际型够用。CPU 优化型用不上：重活（模型推理、向量化）都在 DeepSeek 和百炼那边。
+- 2 核 4 G：Java、MySQL、PostgreSQL、Redis 四个进程，2 G 内存会很紧张。
+
+**踩过的坑**
+- **ExpressVPN 开着时连不上服务器**：PowerShell 的 `Test-NetConnection` 也失败（Ping 状态 11050），断开 VPN 就能连。不在分流列表里的应用并不是直连，而是被拦截（网络锁）；之前 Java 报 `getsockopt`、Git 推送失败都是同一个原因。另外 FinalShell 是 Java 写的，加入分流列表时要加它自带的 java 程序。连服务器时断开 VPN 最省事。
+- **服务器上 `git clone` 要求输入用户名密码**：原来是仓库被误设成了私有。GitHub 早已不接受账号密码拉代码（用 Google 登录的账号更没有密码可填），私有仓库要用部署密钥（Deploy Key：只读、只对一个仓库有效的 SSH 密钥）。最后把仓库改回公开，直接用 HTTPS 地址克隆。
+- **仓库公开前（后）要检查整个 Git 历史**：公开后任何人都能翻完整的提交记录。检查了 `application-local.yml`、`.env` 从未被提交过，历史里也搜不到 API Key、授权码、JWT 密钥。
+- **HTTPS 证书申请失败 `no valid A records found for nickyuan.cn`**：域名解析的主机记录只填了 `www`，只有 `www.nickyuan.cn` 能解析。根域名要再加一条主机记录为 `@` 的 A 记录。
+- Caddy 正式申请失败几次后会切到 Let's Encrypt 的测试环境去试，避免触发正式环境的次数限制，测试通过后自动换回正式环境。
+
+**以后更新线上版本**
+- 本地改代码、提交、推送 → 服务器上 `cd /opt/jarvis && git pull` → `docker compose -f compose.prod.yaml up -d --build app`（只改了 Caddyfile 时用 `restart caddy`）。数据库表结构的变更由 Flyway 在应用启动时自动执行。
+
 ---
 
 ## 下一步
 
-1. 回答里的引用可以点击查看原文：现在检索结果只在后端交给模型，需要在流式接口里把引用的资料也推给前端。
-2. 后台提取的质量：继续观察“更新过时的记忆”“不该记的不记”两种情况，按实际例子调提示词。
-3. 时间统一存 UTC：现在库里存的是配置时区（上海）的 `LocalDateTime`，不带时区信息，页面显示和提醒时间都按上海算。上线前改为存 UTC，按用户的时区显示和换算。
-4. 第 5 周：每日简报、语音交互、部署上线。
+1. 服务器加固和运维：SSH 改为只用密钥登录、关闭密码登录；数据库定期备份（现在数据只在服务器的 Docker volume 里，服务器出问题就全丢了）。
+2. 时间统一存 UTC：现在库里存的是上海时区的 `LocalDateTime`，页面显示和提醒时间都按上海算，而用户在东京。改为存 UTC，按用户的时区显示和换算。
+3. 简历：仓库已公开、网站已上线，把项目和链接写进简历。
+4. 回答里的引用可以点击查看原文。
+5. 后台提取的质量：按实际例子调提示词。
+6. 第 5 周：每日简报、语音交互。
