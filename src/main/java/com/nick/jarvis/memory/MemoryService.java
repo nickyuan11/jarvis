@@ -1,5 +1,6 @@
 package com.nick.jarvis.memory;
 
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 
@@ -7,6 +8,7 @@ import org.springframework.stereotype.Service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.nick.jarvis.entity.UserMemory;
+import com.nick.jarvis.support.JarvisTime;
 import com.nick.jarvis.mapper.UserMemoryMapper;
 
 /**
@@ -125,7 +127,7 @@ public class MemoryService {
      * 偏好和事实分开写，因为用法不同：偏好每次回答都要遵守，事实只在相关时参考。
      * 每条带上编号（用户说“忘掉”时，模型可以直接按编号删除）和记录日期（让模型判断新旧）。
      */
-    public String promptSection(Long userId) {
+    public String promptSection(Long userId, ZoneId zone) {
         List<UserMemory> memories = list(userId);
         if (memories.isEmpty()) {
             return "";
@@ -136,7 +138,7 @@ public class MemoryService {
             StringBuilder target = UserMemory.TYPE_PREFERENCE.equals(m.getType()) ? preferences : facts;
             target.append("- #").append(m.getId()).append(' ').append(m.getContent());
             if (m.getUpdateTime() != null) {
-                target.append("（记录于 ").append(m.getUpdateTime().format(DATE)).append('）');
+                target.append("（记录于 ").append(JarvisTime.local(m.getUpdateTime(), zone).format(DATE)).append('）');
             }
             target.append('\n');
         }

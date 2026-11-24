@@ -59,6 +59,7 @@ class ReminderFirerTest {
         Reminder reminder = new Reminder();
         reminder.setId(1L);
         reminder.setUserId(1L);
+        reminder.setTimeZone("Asia/Tokyo");
         reminder.setContent("开会");
         reminder.setRemindAt(NOW);
         reminder.setRepeatType(RepeatType.NONE.name());

@@ -293,6 +293,7 @@ public class KnowledgeService {
     private static KnowledgeDocumentView toView(KnowledgeDocument doc) {
         LocalDateTime purgeAt = doc.getDeletedAt() == null ? null : doc.getDeletedAt().plus(RETENTION);
         return new KnowledgeDocumentView(doc.getId(), doc.getFilename(), doc.getSizeBytes(), doc.getStatus(),
-                doc.getChunkCount(), doc.getLastError(), doc.getCreateTime(), doc.getDeletedAt(), purgeAt);
+                doc.getChunkCount(), doc.getLastError(), JarvisTime.instant(doc.getCreateTime()),
+                JarvisTime.instant(doc.getDeletedAt()), JarvisTime.instant(purgeAt));
     }
 }

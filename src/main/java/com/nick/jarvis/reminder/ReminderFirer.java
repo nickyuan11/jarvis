@@ -1,6 +1,7 @@
 package com.nick.jarvis.reminder;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -42,7 +43,7 @@ public class ReminderFirer {
         }
         dispatcher.dispatch(reminder.getUserId(),
                 "⏰ 提醒：" + reminder.getContent(),
-                "提醒时间：" + ReminderService.format(reminder.getRemindAt()) + "\n事项：" + reminder.getContent()
+                "提醒时间：" + ReminderService.format(reminder.getRemindAt(), ZoneId.of(reminder.getTimeZone())) + "\n事项：" + reminder.getContent()
                         + "\n\n—— Jarvis");
         return true;
     }
@@ -64,7 +65,7 @@ public class ReminderFirer {
             update.set(Reminder::getStatus, Reminder.STATUS_DONE);
         } else {
             // 循环提醒：状态保持 PENDING，把提醒时间推到下一个周期
-            update.set(Reminder::getRemindAt, repeat.nextAfter(reminder.getRemindAt(), now));
+            update.set(Reminder::getRemindAt, repeat.nextAfter(reminder.getRemindAt(), now, ZoneId.of(reminder.getTimeZone())));
         }
         return reminderMapper.update(null, update) == 1;
     }

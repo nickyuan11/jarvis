@@ -38,7 +38,7 @@ public class NotificationService {
                         .orderByAsc(Notification::getId)
                         .last("LIMIT 20"))
                 .stream()
-                .map(n -> new NotificationView(n.getId(), n.getContent(), n.getCreateTime()))
+                .map(n -> new NotificationView(n.getId(), n.getContent(), JarvisTime.instant(n.getCreateTime())))
                 .toList();
     }
 
@@ -54,6 +54,6 @@ public class NotificationService {
                 .isNull(Notification::getReadAt));
     }
 
-    public record NotificationView(Long id, String content, java.time.LocalDateTime createTime) {
+    public record NotificationView(Long id, String content, java.time.Instant createTime) {
     }
 }

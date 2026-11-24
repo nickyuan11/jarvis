@@ -1,6 +1,7 @@
 package com.nick.jarvis.reminder;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 
@@ -37,16 +38,20 @@ public class ReminderService {
         this.time = time;
     }
 
-    public Reminder create(Long userId, String content, LocalDateTime remindAt, RepeatType repeatType) {
+    public Reminder create(Long userId, String content, LocalDateTime localTime, RepeatType repeatType, ZoneId zone) {
         if (content == null || content.isBlank()) {
             throw new IllegalArgumentException("提醒内容不能为空");
         }
         if (content.strip().length() > MAX_CONTENT) {
             throw new IllegalArgumentException("提醒内容不能超过 " + MAX_CONTENT + " 个字");
         }
+        if (localTime == null) {
+            throw new IllegalArgumentException("缺少提醒时间");
+        }
+        LocalDateTime remindAt = JarvisTime.utc(localTime, zone);
         LocalDateTime now = time.now();
-        if (remindAt == null || remindAt.isBefore(now.minusMinutes(1))) {
-            throw new IllegalArgumentException("提醒时间 " + format(remindAt) + " 已经过去了，当前时间是 " + format(now));
+        if (remindAt.isBefore(now.minusMinutes(1))) {
+            throw new IllegalArgumentException("提醒时间 " + format(remindAt, zone) + " 已经过去了，当前时间是 " + format(now, zone));
         }
         Long pending = reminderMapper.selectCount(new LambdaQueryWrapper<Reminder>()
                 .eq(Reminder::getUserId, userId)
@@ -59,6 +64,7 @@ public class ReminderService {
         reminder.setUserId(userId);
         reminder.setContent(content.strip());
         reminder.setRemindAt(remindAt.withSecond(0).withNano(0));
+        reminder.setTimeZone(zone.getId());
         reminder.setRepeatType(repeatType.name());
         reminder.setStatus(Reminder.STATUS_PENDING);
         reminderMapper.insert(reminder);
@@ -129,19 +135,19 @@ public class ReminderService {
         return fired;
     }
 
-    public static String format(LocalDateTime dateTime) {
-        return dateTime == null ? "（空）" : dateTime.format(FORMAT);
+    public static String format(LocalDateTime dateTime, ZoneId zone) {
+        return dateTime == null ? "（空）" : JarvisTime.local(dateTime, zone).format(FORMAT) + "（" + zone + "）";
     }
 
     /** 给大模型看的一行描述 */
-    public static String describe(Reminder r) {
+    public static String describe(Reminder r, ZoneId zone) {
         RepeatType repeat = RepeatType.parse(r.getRepeatType());
-        String repeatText = repeat == RepeatType.NONE ? "" : "，" + repeat.label() + "重复";
+        String repeatText = repeat == RepeatType.NONE ? "" : "，" + repeat.label() + "重复（" + r.getTimeZone() + "）";
         String statusText = switch (r.getStatus()) {
-            case Reminder.STATUS_DONE -> "（已于 " + format(r.getUpdateTime()) + " 提醒）";
-            case Reminder.STATUS_CANCELLED -> "（已于 " + format(r.getUpdateTime()) + " 取消）";
+            case Reminder.STATUS_DONE -> "（已于 " + format(r.getUpdateTime(), zone) + " 提醒）";
+            case Reminder.STATUS_CANCELLED -> "（已于 " + format(r.getUpdateTime(), zone) + " 取消）";
             default -> "";
         };
-        return "#" + r.getId() + " " + format(r.getRemindAt()) + " " + r.getContent() + repeatText + statusText;
+        return "#" + r.getId() + " " + format(r.getRemindAt(), zone) + " " + r.getContent() + repeatText + statusText;
     }
 }

@@ -1,6 +1,6 @@
 package com.nick.jarvis.dto;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 
 /**
  * 资料列表里的一项。不包含原文。
@@ -10,6 +10,6 @@ import java.time.LocalDateTime;
  * @param purgeAt   将被永久删除的时间（移入回收站 7 天后），未删除时为 null
  */
 public record KnowledgeDocumentView(Long id, String filename, Integer sizeBytes, String status,
-                                    Integer chunkCount, String lastError, LocalDateTime createTime,
-                                    LocalDateTime deletedAt, LocalDateTime purgeAt) {
+                                    Integer chunkCount, String lastError, Instant createTime,
+                                    Instant deletedAt, Instant purgeAt) {
 }

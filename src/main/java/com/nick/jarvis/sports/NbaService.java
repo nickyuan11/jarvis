@@ -2,6 +2,7 @@ package com.nick.jarvis.sports;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -17,7 +18,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
-import com.nick.jarvis.support.JarvisTime;
 import com.nick.jarvis.support.MapPath;
 import com.nick.jarvis.support.TextCache;
 
@@ -37,9 +37,8 @@ public class NbaService {
 
     private final RestClient restClient;
     private final TextCache cache;
-    private final JarvisTime time;
 
-    public NbaService(TextCache cache, JarvisTime time) {
+    public NbaService(TextCache cache) {
         // 第三方接口一定要设超时，否则对方卡住时，我们的请求线程也会一直卡着
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(Duration.ofSeconds(5));
@@ -53,30 +52,29 @@ public class NbaService {
                 .defaultHeader(HttpHeaders.ACCEPT, "application/json")
                 .build();
         this.cache = cache;
-        this.time = time;
     }
 
     /** 某支球队最近已经结束的比赛 */
-    public String recentGames(String team, int count) {
+    public String recentGames(String team, int count, ZoneId zone) {
         String abbr = normalize(team);
-        return cached("recent:" + abbr + ":" + count, Duration.ofMinutes(5), () -> {
+        return cached("recent:" + zone + ":" + abbr + ":" + count, Duration.ofMinutes(5), () -> {
             List<Map<?, ?>> finished = events(abbr).stream()
                     .filter(e -> MapPath.bool(e, "competitions", 0, "status", "type", "completed"))
                     .toList();
             if (finished.isEmpty()) {
                 return "没有找到 " + abbr.toUpperCase() + " 本赛季已结束的比赛";
             }
-            StringBuilder sb = new StringBuilder(abbr.toUpperCase() + " 最近已结束的比赛（北京时间）：\n");
+            StringBuilder sb = new StringBuilder(abbr.toUpperCase() + " 最近已结束的比赛（" + zone + "）：\n");
             finished.subList(Math.max(0, finished.size() - count), finished.size())
-                    .forEach(e -> sb.append(describeGame(e, abbr)).append('\n'));
+                    .forEach(e -> sb.append(describeGame(e, abbr, zone)).append('\n'));
             return sb.toString();
         });
     }
 
     /** 某支球队接下来的比赛 */
-    public String upcomingGames(String team, int count) {
+    public String upcomingGames(String team, int count, ZoneId zone) {
         String abbr = normalize(team);
-        return cached("upcoming:" + abbr + ":" + count, Duration.ofMinutes(30), () -> {
+        return cached("upcoming:" + zone + ":" + abbr + ":" + count, Duration.ofMinutes(30), () -> {
             List<Map<?, ?>> upcoming = events(abbr).stream()
                     .filter(e -> !MapPath.bool(e, "competitions", 0, "status", "type", "completed"))
                     .limit(count)
@@ -84,8 +82,8 @@ public class NbaService {
             if (upcoming.isEmpty()) {
                 return "没有找到 " + abbr.toUpperCase() + " 接下来的比赛";
             }
-            StringBuilder sb = new StringBuilder(abbr.toUpperCase() + " 接下来的比赛（北京时间）：\n");
-            upcoming.forEach(e -> sb.append(describeGame(e, abbr)).append('\n'));
+            StringBuilder sb = new StringBuilder(abbr.toUpperCase() + " 接下来的比赛（" + zone + "）：\n");
+            upcoming.forEach(e -> sb.append(describeGame(e, abbr, zone)).append('\n'));
             return sb.toString();
         });
     }
@@ -153,7 +151,7 @@ public class NbaService {
     }
 
     /** 例如：2026-10-31 07:30  PHI 118 : 112 BOS（胜，主场） 比赛ID 401810001 */
-    private String describeGame(Map<?, ?> event, String abbr) {
+    private String describeGame(Map<?, ?> event, String abbr, ZoneId zone) {
         Object competition = MapPath.get(event, "competitions", 0);
         Object us = null;
         Object them = null;
@@ -165,7 +163,7 @@ public class NbaService {
                 them = c;
             }
         }
-        String when = toLocal(MapPath.string(event, "date"));
+        String when = toLocal(MapPath.string(event, "date"), zone);
         String ourName = MapPath.string(us, "team", "abbreviation");
         String theirName = MapPath.string(them, "team", "abbreviation");
         String venue = "home".equals(MapPath.string(us, "homeAway")) ? "主场" : "客场";
@@ -181,13 +179,13 @@ public class NbaService {
                 + "（" + result + "，" + venue + "） 比赛ID " + id;
     }
 
-    private String toLocal(String isoDate) {
+    private String toLocal(String isoDate, ZoneId zone) {
         if (isoDate == null) {
             return "时间未知";
         }
         try {
-            // ESPN 的时间是 UTC，形如 2026-10-30T23:30Z，统一换算成北京时间
-            return OffsetDateTime.parse(isoDate).atZoneSameInstant(time.zone()).format(DISPLAY);
+            // ESPN 的时间是 UTC，形如 2026-10-30T23:30Z，按用户时区显示
+            return OffsetDateTime.parse(isoDate).atZoneSameInstant(zone).format(DISPLAY);
         } catch (Exception e) {
             return isoDate;
         }

@@ -30,7 +30,7 @@ public class ChatController {
     /** 一次性返回 */
     @PostMapping
     public ChatReply chat(@RequestBody ChatRequest request) {
-        return chatService.chat(request.conversationId(), request.message());
+        return chatService.chat(request.conversationId(), request.message(), request.timeZone());
     }
 
     /**
@@ -39,6 +39,6 @@ public class ChatController {
      */
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<Object>> stream(@RequestBody ChatRequest request) {
-        return chatService.streamChat(request.conversationId(), request.message());
+        return chatService.streamChat(request.conversationId(), request.message(), request.timeZone());
     }
 }

@@ -2,6 +2,7 @@ package com.nick.jarvis.tools;
 
 import java.util.function.Supplier;
 
+import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
@@ -27,18 +28,18 @@ public class LolTools {
     @Tool(description = "查询某支英雄联盟战队最近已结束的比赛：时间、赛事、比分和胜负。问“BLG 昨天赢了吗”“T1 最近状态怎么样”时使用。")
     public String lolRecentMatches(
             @ToolParam(description = TEAM_PARAM) String team,
-            @ToolParam(description = "返回几场，默认 3，最多 10", required = false) Integer count) {
-        return safely(() -> lolService.recentMatches(team, clamp(count)));
+            @ToolParam(description = "返回几场，默认 3，最多 10", required = false) Integer count, ToolContext context) {
+        return safely(() -> lolService.recentMatches(team, clamp(count), ToolContextKeys.zone(context)));
     }
 
     @Tool(description = """
-            查询英雄联盟正在进行和即将开始的比赛（北京时间）。
+            查询英雄联盟正在进行和即将开始的比赛（用户当地时间）。
             指定战队时返回该战队的赛程；不指定时返回世界赛（Worlds）的赛程。
             问“BLG 下一场什么时候打”“今天世界赛有什么比赛”时使用。""")
     public String lolUpcomingMatches(
             @ToolParam(description = TEAM_PARAM + " 可不填。", required = false) String team,
-            @ToolParam(description = "返回几场，默认 5，最多 10", required = false) Integer count) {
-        return safely(() -> lolService.upcomingMatches(team, count == null ? 5 : clamp(count)));
+            @ToolParam(description = "返回几场，默认 5，最多 10", required = false) Integer count, ToolContext context) {
+        return safely(() -> lolService.upcomingMatches(team, count == null ? 5 : clamp(count), ToolContextKeys.zone(context)));
     }
 
     private static int clamp(Integer count) {

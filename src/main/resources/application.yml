@@ -35,7 +35,7 @@ spring:
   datasource:
     # 默认连 Docker 里的 MySQL（compose.yaml 映射到本机 3307）。
     # 主机和端口可以用环境变量覆盖，以后应用也放进 Docker 时，DB_HOST 改成服务名 mysql 即可
-    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3307}/jarvis?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3307}/jarvis?useUnicode=true&characterEncoding=utf8&connectionTimeZone=%2B00:00&forceConnectionTimeZoneToSession=true
     username: ${DB_USERNAME:jarvis}
     password: ${DB_PASSWORD:}
   # 发送提醒邮件的 SMTP 配置。账号和授权码放在 application-local.yml 里
@@ -92,7 +92,7 @@ spring:
         model: deepseek-v4-flash
 
 jarvis:
-  # 换算“明天”“下周一”、显示比赛时间都以这个时区为准
+  # 旧客户端未提供浏览器时区时的默认值
   time-zone: Asia/Shanghai
   jwt:
     # 签名密钥放在 application-local.yml 里，至少 32 字节（Base64 编码后约 44 个字符）

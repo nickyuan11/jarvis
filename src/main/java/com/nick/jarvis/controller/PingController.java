@@ -1,6 +1,6 @@
 package com.nick.jarvis.controller;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.Map;
 
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,7 +20,7 @@ public class PingController {
         return Map.of(
                 "status", "ok",
                 "message", "Jarvis is online",
-                "time", LocalDateTime.now().toString()
+                "time", Instant.now().toString()
         );
     }
 }

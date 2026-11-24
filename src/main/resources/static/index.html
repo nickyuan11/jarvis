@@ -574,7 +574,7 @@
             const resp = await api('/api/chat/stream', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ conversationId, message: text })
+                body: JSON.stringify({ conversationId, message: text, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone })
             });
             if (!resp.ok) {
                 // 比如 429 限流：显示服务器返回的具体原因
@@ -729,7 +729,10 @@
     }
 
     function formatTime(iso) {
-        return iso ? iso.replace('T', ' ').slice(0, 16) : '';
+        if (!iso) return '';
+        const date = new Date(iso);
+        const pad = n => String(n).padStart(2, '0');
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
     }
 
     async function fetchDocuments(trash) {

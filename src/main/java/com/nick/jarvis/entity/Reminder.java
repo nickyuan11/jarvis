@@ -28,6 +28,9 @@ public class Reminder {
     /** 下一次提醒时间 */
     private LocalDateTime remindAt;
 
+    /** 创建提醒时的 IANA 时区，后台按当地日历推进重复提醒。 */
+    private String timeZone;
+
     /** 对应 RepeatType 的名字 */
     private String repeatType;
 

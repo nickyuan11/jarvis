@@ -1,6 +1,7 @@
 package com.nick.jarvis.memory;
 
 import java.time.Duration;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -148,8 +149,10 @@ public class MemoryExtractor {
 
     private List<Operation> callModel(Long conversationId, List<UserMemory> existing, List<Message> messages) {
         try {
-            List<Operation> operations = client.extract(time.now().toLocalDate().toString(),
-                    describe(existing), transcript(messages));
+            ZoneId zone = messages.reversed().stream().filter(m -> Message.ROLE_USER.equals(m.getRole()))
+                    .findFirst().orElseThrow().sentZone();
+            List<Operation> operations = client.extract(time.zonedNow(zone).toLocalDate().toString(),
+                    describe(existing, zone), transcript(messages));
             failures.remove(conversationId);
             return operations;
         } catch (RuntimeException e) {
@@ -204,7 +207,7 @@ public class MemoryExtractor {
         }
     }
 
-    private static String describe(List<UserMemory> memories) {
+    private static String describe(List<UserMemory> memories, ZoneId zone) {
         if (memories.isEmpty()) {
             return "（还没有）\n";
         }
@@ -212,7 +215,7 @@ public class MemoryExtractor {
         for (UserMemory m : memories) {
             sb.append('#').append(m.getId()).append(" [").append(m.getType()).append("] ").append(m.getContent());
             if (m.getUpdateTime() != null) {
-                sb.append("（记录于 ").append(m.getUpdateTime().toLocalDate()).append('）');
+                sb.append("（记录于 ").append(JarvisTime.local(m.getUpdateTime(), zone).toLocalDate()).append('）');
             }
             sb.append('\n');
         }
@@ -227,7 +230,11 @@ public class MemoryExtractor {
                 continue;
             }
             if (Message.ROLE_USER.equals(m.getRole())) {
-                sb.append("[用户] ").append(shorten(m.getContent(), MAX_USER_CHARS)).append('\n');
+                sb.append("[用户] ");
+                if (m.getCreateTime() != null) {
+                    sb.append(JarvisTime.local(m.getCreateTime(), m.sentZone())).append(" ").append(m.sentZone()).append(" ");
+                }
+                sb.append(shorten(m.getContent(), MAX_USER_CHARS)).append('\n');
             } else if (Message.ROLE_ASSISTANT.equals(m.getRole())) {
                 sb.append("[助手] ").append(shorten(m.getContent(), MAX_ASSISTANT_CHARS)).append('\n');
             }

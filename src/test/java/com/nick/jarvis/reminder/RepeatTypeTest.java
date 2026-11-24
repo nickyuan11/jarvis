@@ -30,7 +30,7 @@ class RepeatTypeTest {
         // 每天 9 点的提醒，服务停了三天，周四 10 点才恢复：下一次应该是周五 9 点，而不是补发三次
         LocalDateTime thursday10am = LocalDateTime.of(2026, 11, 5, 10, 0);
 
-        assertThat(RepeatType.DAILY.nextAfter(MONDAY_9AM, thursday10am))
+        assertThat(RepeatType.DAILY.nextAfter(MONDAY_9AM, thursday10am, java.time.ZoneOffset.UTC))
                 .isEqualTo(LocalDateTime.of(2026, 11, 6, 9, 0));
     }
 
@@ -38,7 +38,7 @@ class RepeatTypeTest {
     void nextAfterIsAlwaysInTheFuture() {
         LocalDateTime now = MONDAY_9AM;
         // 恰好在提醒时刻触发：下一次是一周后，不能还是现在
-        assertThat(RepeatType.WEEKLY.nextAfter(MONDAY_9AM, now)).isAfter(now);
+        assertThat(RepeatType.WEEKLY.nextAfter(MONDAY_9AM, now, java.time.ZoneOffset.UTC)).isAfter(now);
     }
 
     @Test

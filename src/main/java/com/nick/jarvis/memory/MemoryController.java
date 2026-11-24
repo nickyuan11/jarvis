@@ -1,6 +1,6 @@
 package com.nick.jarvis.memory;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.List;
 
 import org.springframework.http.HttpStatus;
@@ -16,6 +16,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import com.nick.jarvis.entity.UserMemory;
 import com.nick.jarvis.security.CurrentUser;
+import com.nick.jarvis.support.JarvisTime;
 
 /**
  * 记忆接口：让用户看到 Jarvis 记住了自己什么，并且能添加、删掉任意一条。
@@ -31,7 +32,7 @@ import com.nick.jarvis.security.CurrentUser;
 public class MemoryController {
 
     /** 返回给前端的一条记忆 */
-    public record MemoryView(Long id, String content, String type, String source, LocalDateTime updateTime) {
+    public record MemoryView(Long id, String content, String type, String source, Instant updateTime) {
     }
 
     /** 手动添加的请求体。type 不填时默认是 FACT */
@@ -73,6 +74,6 @@ public class MemoryController {
     }
 
     private static MemoryView toView(UserMemory m) {
-        return new MemoryView(m.getId(), m.getContent(), m.getType(), m.getSource(), m.getUpdateTime());
+        return new MemoryView(m.getId(), m.getContent(), m.getType(), m.getSource(), JarvisTime.instant(m.getUpdateTime()));
     }
 }

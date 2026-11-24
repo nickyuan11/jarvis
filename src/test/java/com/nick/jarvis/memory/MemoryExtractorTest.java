@@ -43,7 +43,7 @@ import com.nick.jarvis.support.JarvisTime;
 @ExtendWith(MockitoExtension.class)
 class MemoryExtractorTest {
 
-    private static final ZoneId ZONE = ZoneId.of("Asia/Shanghai");
+    private static final ZoneId ZONE = ZoneId.of("UTC");
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 11, 16, 15, 0);
     private static final long USER_ID = 1L;
     private static final long CONVERSATION_ID = 7L;

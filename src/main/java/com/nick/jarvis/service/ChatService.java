@@ -2,6 +2,8 @@ package com.nick.jarvis.service;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.time.DateTimeException;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.TextStyle;
 import java.util.List;
@@ -104,21 +106,21 @@ public class ChatService {
      * 当前时间每分钟都在变，必须放在最后；记忆很少变化，放在它前面，就能和固定规则一起被缓存。
      */
     private ChatClient.ChatClientRequestSpec newPrompt(Prepared prepared) {
-        var now = time.zonedNow();
+        var now = time.zonedNow(prepared.zone());
         String timeLine = "\n当前时间：" + now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
                 + "，" + now.getDayOfWeek().getDisplayName(TextStyle.FULL, Locale.CHINA)
-                + "（" + time.zone() + "）";
+                + "（" + prepared.zone() + "）";
         return chatClient.prompt()
-                .system(systemPrompt + memoryService.promptSection(prepared.userId()) + timeLine)
+                .system(systemPrompt + memoryService.promptSection(prepared.userId(), prepared.zone()) + timeLine)
                 .messages(prepared.history())
                 .tools(tools)
                 .toolContext(Map.of(ToolContextKeys.USER_ID, prepared.userId(),
-                        ToolContextKeys.CONVERSATION_ID, prepared.conversationId()));
+                        ToolContextKeys.TIME_ZONE, prepared.zone(), ToolContextKeys.CONVERSATION_ID, prepared.conversationId()));
     }
 
     /** 一次性返回完整回复 */
-    public ChatReply chat(Long conversationId, String userText) {
-        Prepared prepared = prepare(conversationId, userText);
+    public ChatReply chat(Long conversationId, String userText, String timeZone) {
+        Prepared prepared = prepare(conversationId, userText, timeZone);
 
         // 注意：调用大模型可能要好几秒，所以不要把它放在数据库事务里，否则会长时间占用数据库连接
         ChatResponse response = newPrompt(prepared)
@@ -139,9 +141,9 @@ public class ChatService {
      * 流式返回：模型每生成一小段，就立刻推给前端。
      * 返回的 Flux 是“一串将来会陆续到达的事件”，Spring MVC 会把它按 SSE 格式写回给浏览器。
      */
-    public Flux<ServerSentEvent<Object>> streamChat(Long conversationId, String userText) {
+    public Flux<ServerSentEvent<Object>> streamChat(Long conversationId, String userText, String timeZone) {
         // 准备工作（查库、存用户消息）是同步执行的，出错会直接返回 400/404，不会进入流
-        Prepared prepared = prepare(conversationId, userText);
+        Prepared prepared = prepare(conversationId, userText, timeZone);
         Long convId = prepared.conversationId();
 
         // 用来在流的过程中累积完整回复和最后的元数据
@@ -202,19 +204,25 @@ public class ChatService {
     // ------------------------------------------------------------------
 
     /** 前三步的结果：会话 id、当前用户 id、准备发给模型的历史消息 */
-    private record Prepared(Long conversationId, Long userId,
+    private record Prepared(Long conversationId, Long userId, ZoneId zone,
                             List<org.springframework.ai.chat.messages.Message> history) {
     }
 
-    private Prepared prepare(Long conversationId, String userText) {
+    private Prepared prepare(Long conversationId, String userText, String timeZone) {
         if (userText == null || userText.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "message 不能为空");
+        }
+        ZoneId zone;
+        try {
+            zone = time.userZone(timeZone);
+        } catch (DateTimeException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "无效的时区");
         }
         // 先限流再干活：被拒绝的请求不会写数据库，也不会调用大模型
         rateLimiter.check(CurrentUser.id());
         Conversation conversation = findOrCreateConversation(conversationId, userText);
-        saveMessage(conversation.getId(), Message.ROLE_USER, userText, null, null, null);
-        return new Prepared(conversation.getId(), CurrentUser.id(), loadHistory(conversation.getId()));
+        saveMessage(conversation.getId(), Message.ROLE_USER, userText, zone.getId(), null, null, null);
+        return new Prepared(conversation.getId(), CurrentUser.id(), zone, loadHistory(conversation.getId()));
     }
 
     private Conversation findOrCreateConversation(Long conversationId, String firstMessage) {
@@ -259,21 +267,22 @@ public class ChatService {
     }
 
     private static String sentAt(Message m) {
-        return m.getCreateTime() == null ? "" : "（发送于 " + m.getCreateTime().format(SENT_AT) + "）";
+        return m.getCreateTime() == null ? "" : "（发送于 " + JarvisTime.local(m.getCreateTime(), m.sentZone()).format(SENT_AT) + " " + m.sentZone() + "）";
     }
 
     private void saveAssistantReply(Long conversationId, String text, String model,
                                     Integer promptTokens, Integer completionTokens) {
-        saveMessage(conversationId, Message.ROLE_ASSISTANT, text, model, promptTokens, completionTokens);
+        saveMessage(conversationId, Message.ROLE_ASSISTANT, text, null, model, promptTokens, completionTokens);
         touchConversation(conversationId);
     }
 
-    private void saveMessage(Long conversationId, String role, String content,
+    private void saveMessage(Long conversationId, String role, String content, String timeZone,
                              String model, Integer promptTokens, Integer completionTokens) {
         Message message = new Message();
         message.setConversationId(conversationId);
         message.setRole(role);
         message.setContent(content);
+        message.setTimeZone(timeZone);
         message.setModel(model);
         message.setPromptTokens(promptTokens);
         message.setCompletionTokens(completionTokens);

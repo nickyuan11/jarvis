@@ -14,6 +14,7 @@ import com.nick.jarvis.entity.Message;
 import com.nick.jarvis.mapper.ConversationMapper;
 import com.nick.jarvis.mapper.MessageMapper;
 import com.nick.jarvis.security.CurrentUser;
+import com.nick.jarvis.support.JarvisTime;
 
 /**
  * 会话管理：列表、查看消息、重命名、删除。
@@ -40,7 +41,7 @@ public class ConversationService {
                         .orderByDesc(Conversation::getUpdateTime)
                         .last("LIMIT " + MAX_LIST_SIZE))
                 .stream()
-                .map(c -> new ConversationView(c.getId(), c.getTitle(), c.getUpdateTime()))
+                .map(c -> new ConversationView(c.getId(), c.getTitle(), JarvisTime.instant(c.getUpdateTime())))
                 .toList();
     }
 
@@ -51,7 +52,7 @@ public class ConversationService {
                         .eq(Message::getConversationId, conversationId)
                         .orderByAsc(Message::getId))
                 .stream()
-                .map(m -> new MessageView(m.getId(), m.getRole(), m.getContent(), m.getCreateTime()))
+                .map(m -> new MessageView(m.getId(), m.getRole(), m.getContent(), JarvisTime.instant(m.getCreateTime())))
                 .toList();
     }
 
