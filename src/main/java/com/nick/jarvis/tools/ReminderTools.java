@@ -45,9 +45,10 @@ public class ReminderTools {
                     required = false) String repeatType,
             ToolContext toolContext) {
         try {
-            LocalDateTime time = LocalDateTime.parse(remindAt.strip(), ReminderService.FORMAT);
-            Reminder reminder = reminderService.create(userId(toolContext), content, time, RepeatType.parse(repeatType));
-            return "已创建提醒 " + ReminderService.describe(reminder);
+            LocalDateTime local = LocalDateTime.parse(remindAt.strip(), ReminderService.FORMAT);
+            Reminder reminder = reminderService.create(userId(toolContext), content, local,
+                    RepeatType.parse(repeatType), ToolContextKeys.zone(toolContext));
+            return "已创建提醒 " + ReminderService.describe(reminder, ToolContextKeys.zone(toolContext));
         } catch (DateTimeParseException e) {
             return "创建失败：时间格式不对，需要 yyyy-MM-dd HH:mm，收到的是 " + remindAt;
         } catch (IllegalArgumentException e) {
@@ -69,11 +70,11 @@ public class ReminderTools {
             sb.append("当前没有待提醒的事项\n");
         } else {
             sb.append("待提醒：\n");
-            pending.forEach(r -> sb.append(ReminderService.describe(r)).append('\n'));
+            pending.forEach(r -> sb.append(ReminderService.describe(r, ToolContextKeys.zone(toolContext))).append('\n'));
         }
         if (!finished.isEmpty()) {
             sb.append("最近 24 小时已提醒或已取消：\n");
-            finished.forEach(r -> sb.append(ReminderService.describe(r)).append('\n'));
+            finished.forEach(r -> sb.append(ReminderService.describe(r, ToolContextKeys.zone(toolContext))).append('\n'));
         }
         return sb.toString();
     }
@@ -84,7 +85,7 @@ public class ReminderTools {
             ToolContext toolContext) {
         try {
             Reminder reminder = reminderService.cancel(userId(toolContext), reminderId);
-            return "已取消提醒 " + ReminderService.describe(reminder);
+            return "已取消提醒 " + ReminderService.describe(reminder, ToolContextKeys.zone(toolContext));
         } catch (IllegalArgumentException e) {
             return "取消失败：" + e.getMessage();
         }

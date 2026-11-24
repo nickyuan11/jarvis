@@ -12,7 +12,7 @@ import com.nick.jarvis.support.JarvisTime;
  * 自动填充 createTime 和 updateTime，业务代码里不需要手动 set。
  * 对应实体字段上的 @TableField(fill = ...)。
  *
- * 时间取自 JarvisTime（配置的时区），不能用 LocalDateTime.now()（电脑的系统时区）。
+ * 时间取自 JarvisTime（UTC），不能用 LocalDateTime.now()（电脑的系统时区）。
  * 整个应用只能有一个时钟：这里填的时间会和业务代码里 time.now() 得到的时间直接比较，
  * 比如“会话空闲了多久”。两个时钟的时区不一致时，比较结果会差出几个小时，
  * 而且在时区恰好相同的电脑上完全看不出问题。

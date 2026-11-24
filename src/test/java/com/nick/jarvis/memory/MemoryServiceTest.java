@@ -114,7 +114,7 @@ class MemoryServiceTest {
                 memory(5L, 1L, "希望回答简短", UserMemory.TYPE_PREFERENCE),
                 memory(3L, 1L, "对花生过敏", UserMemory.TYPE_FACT)));
 
-        String section = service.promptSection(1L);
+        String section = service.promptSection(1L, java.time.ZoneOffset.UTC);
 
         assertThat(section)
                 .contains("每次回答都要遵守", "- #5 希望回答简短（记录于 2026-11-13）")
@@ -127,6 +127,6 @@ class MemoryServiceTest {
     void noMemoriesMeansNothingIsAddedToThePrompt() {
         when(mapper.selectList(any())).thenReturn(List.of());
 
-        assertThat(service.promptSection(1L)).isEmpty();
+        assertThat(service.promptSection(1L, java.time.ZoneOffset.UTC)).isEmpty();
     }
 }

@@ -1,5 +1,6 @@
 package com.nick.jarvis.tools;
 
+import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
@@ -26,15 +27,15 @@ public class NbaTools {
     @Tool(description = "查询某支 NBA 球队最近已经结束的比赛：时间、比分、胜负和比赛ID。问“XX 昨天赢了吗”“最近战绩”时使用。")
     public String nbaRecentGames(
             @ToolParam(description = TEAM_PARAM) String team,
-            @ToolParam(description = "返回几场，默认 3，最多 10", required = false) Integer count) {
-        return safely(() -> nbaService.recentGames(team, clamp(count)));
+            @ToolParam(description = "返回几场，默认 3，最多 10", required = false) Integer count, ToolContext context) {
+        return safely(() -> nbaService.recentGames(team, clamp(count), ToolContextKeys.zone(context)));
     }
 
-    @Tool(description = "查询某支 NBA 球队接下来的比赛时间（北京时间）。问“XX 下一场什么时候打”时使用。")
+    @Tool(description = "查询某支 NBA 球队接下来的比赛时间（用户当地时间）。问“XX 下一场什么时候打”时使用。")
     public String nbaUpcomingGames(
             @ToolParam(description = TEAM_PARAM) String team,
-            @ToolParam(description = "返回几场，默认 3，最多 10", required = false) Integer count) {
-        return safely(() -> nbaService.upcomingGames(team, clamp(count)));
+            @ToolParam(description = "返回几场，默认 3，最多 10", required = false) Integer count, ToolContext context) {
+        return safely(() -> nbaService.upcomingGames(team, clamp(count), ToolContextKeys.zone(context)));
     }
 
     @Tool(description = """

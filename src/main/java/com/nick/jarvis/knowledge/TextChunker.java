@@ -35,13 +35,21 @@ public class TextChunker {
         this.overlapChars = overlapChars;
     }
 
+    public record Chunk(String text, int start, int end) {
+    }
+
     public List<String> split(String text) {
+        return splitLocated(text).stream().map(Chunk::text).toList();
+    }
+
+    /** 起止位置是 MySQL 原文的 Java 字符下标，end 不包含在片段内。 */
+    public List<Chunk> splitLocated(String text) {
         if (text == null) {
             return List.of();
         }
         // 统一换行符：Windows 是 \r\n，老的 Mac 是 \r
-        String normalized = text.replace("\r\n", "\n").replace('\r', '\n').strip();
-        if (normalized.isEmpty()) {
+        String normalized = text.replace("\r\n", "\n").replace('\r', '\n');
+        if (normalized.isBlank()) {
             return List.of();
         }
 
@@ -57,7 +65,16 @@ public class TextChunker {
                 pieces.addAll(splitLongParagraph(p));
             }
         }
-        return merge(pieces);
+        // 换行归一化后，CRLF 少了一个字符。保留映射，预览仍能截取上传时的原文。
+        int[] offsets = new int[normalized.length() + 1];
+        int raw = 0;
+        for (int i = 0; i < normalized.length(); i++) {
+            offsets[i] = raw;
+            if (text.startsWith("\r\n", raw)) raw++;
+            raw++;
+        }
+        offsets[normalized.length()] = raw;
+        return merge(pieces, normalized, offsets);
     }
 
     /** 把超长段落按句子切开，再把句子装进不超过 maxChars 的小段 */
@@ -90,22 +107,32 @@ public class TextChunker {
     }
 
     /** 合并相邻的小段，满了就开始新的一块，新块开头带上前一块的末尾 */
-    private List<String> merge(List<String> pieces) {
-        List<String> chunks = new ArrayList<>();
+    private List<Chunk> merge(List<String> pieces, String normalized, int[] offsets) {
+        List<Chunk> chunks = new ArrayList<>();
+        // 与 current 中的字符同步，保留重叠部分在原文的位置。
+        List<Integer> positions = new ArrayList<>();
+        int cursor = 0;
         StringBuilder current = new StringBuilder();
         for (String piece : pieces) {
+            int start = normalized.indexOf(piece, cursor);
+            if (start < 0) throw new IllegalStateException("无法定位资料片段");
             if (!current.isEmpty() && current.length() + PARAGRAPH_SEPARATOR.length() + piece.length() > maxChars) {
                 String finished = current.toString();
-                chunks.add(finished);
+                chunks.add(new Chunk(finished, positions.get(0), offsets[cursor]));
                 current = new StringBuilder(tail(finished));
+                positions = new ArrayList<>(positions.subList(positions.size() - current.length(), positions.size()));
             }
             if (!current.isEmpty()) {
                 current.append(PARAGRAPH_SEPARATOR);
+                positions.add(offsets[cursor]);
+                positions.add(offsets[cursor]);
             }
             current.append(piece);
+            cursor = start + piece.length();
+            for (int i = start; i < cursor; i++) positions.add(offsets[i]);
         }
         if (!current.isEmpty()) {
-            chunks.add(current.toString());
+            chunks.add(new Chunk(current.toString(), positions.get(0), offsets[cursor]));
         }
         return chunks;
     }

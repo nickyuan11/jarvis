@@ -44,7 +44,7 @@ import com.nick.jarvis.support.JarvisTime;
 @ExtendWith(MockitoExtension.class)
 class KnowledgeServiceTest {
 
-    private static final ZoneId ZONE = ZoneId.of("Asia/Shanghai");
+    private static final ZoneId ZONE = ZoneId.of("UTC");
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 11, 4, 15, 0);
 
     @Mock

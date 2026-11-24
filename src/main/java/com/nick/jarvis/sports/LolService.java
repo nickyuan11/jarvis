@@ -2,6 +2,7 @@ package com.nick.jarvis.sports;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -18,7 +19,6 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.util.UriBuilder;
 
-import com.nick.jarvis.support.JarvisTime;
 import com.nick.jarvis.support.MapPath;
 import com.nick.jarvis.support.TextCache;
 
@@ -38,10 +38,9 @@ public class LolService {
 
     private final RestClient restClient;
     private final TextCache cache;
-    private final JarvisTime time;
     private final boolean configured;
 
-    public LolService(TextCache cache, JarvisTime time,
+    public LolService(TextCache cache,
                       @Value("${jarvis.pandascore.token:}") String token) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(Duration.ofSeconds(5));
@@ -54,34 +53,33 @@ public class LolService {
                 .defaultHeader(HttpHeaders.ACCEPT, "application/json")
                 .build();
         this.cache = cache;
-        this.time = time;
         this.configured = token != null && !token.isBlank();
     }
 
     /** 某支队伍最近已结束的比赛 */
-    public String recentMatches(String team, int count) {
+    public String recentMatches(String team, int count, ZoneId zone) {
         requireConfigured();
         String acronym = normalize(team);
         if (acronym == null) {
             throw new IllegalArgumentException("需要队伍简称，例如 BLG、T1");
         }
-        return cache.get("lol:v1:recent:" + acronym + ":" + count, Duration.ofMinutes(5), () -> {
+        return cache.get("lol:v2:recent:" + zone + ":" + acronym + ":" + count, Duration.ofMinutes(5), () -> {
             List<Map<?, ?>> matches = fetch("/lol/matches/past", acronym, count);
             if (matches.isEmpty()) {
                 return "没有找到 " + acronym + " 最近的比赛，请确认队伍简称是否正确";
             }
-            StringBuilder sb = new StringBuilder(acronym + " 最近的比赛（北京时间，最新的在前）：\n");
-            matches.forEach(m -> sb.append(describe(m)).append('\n'));
+            StringBuilder sb = new StringBuilder(acronym + " 最近的比赛（" + zone + "，最新的在前）：\n");
+            matches.forEach(m -> sb.append(describe(m, zone)).append('\n'));
             return sb.toString();
         });
     }
 
     /** 正在进行和即将开始的比赛；team 为空时返回世界赛的赛程 */
-    public String upcomingMatches(String team, int count) {
+    public String upcomingMatches(String team, int count, ZoneId zone) {
         requireConfigured();
         String acronym = normalize(team);
         String key = acronym == null ? "worlds" : acronym;
-        return cache.get("lol:v1:upcoming:" + key + ":" + count, Duration.ofMinutes(5), () -> {
+        return cache.get("lol:v2:upcoming:" + zone + ":" + key + ":" + count, Duration.ofMinutes(5), () -> {
             List<Map<?, ?>> running = fetch("/lol/matches/running", acronym, count);
             List<Map<?, ?>> upcoming = fetch("/lol/matches/upcoming", acronym, count);
             String title = acronym == null ? "世界赛" : acronym;
@@ -90,12 +88,12 @@ public class LolService {
             }
             StringBuilder sb = new StringBuilder();
             if (!running.isEmpty()) {
-                sb.append(title).append(" 正在进行的比赛：\n");
-                running.forEach(m -> sb.append(describe(m)).append('\n'));
+                sb.append(title).append(" 正在进行的比赛（").append(zone).append("）：\n");
+                running.forEach(m -> sb.append(describe(m, zone)).append('\n'));
             }
             if (!upcoming.isEmpty()) {
-                sb.append(title).append(" 接下来的比赛（北京时间）：\n");
-                upcoming.forEach(m -> sb.append(describe(m)).append('\n'));
+                sb.append(title).append(" 接下来的比赛（").append(zone).append("）：\n");
+                upcoming.forEach(m -> sb.append(describe(m, zone)).append('\n'));
             }
             return sb.toString();
         });
@@ -147,7 +145,7 @@ public class LolService {
     }
 
     /** 例如：2026-11-01 06:04 Worlds 2026 Group Stage | HLE 0 : 2 BLG（BLG 胜，BO3） */
-    private String describe(Map<?, ?> match) {
+    private String describe(Map<?, ?> match, ZoneId zone) {
         // 队伍 id → 简称，用来把比分对应到队伍上
         Map<String, String> names = new HashMap<>();
         List<String> order = new ArrayList<>();
@@ -159,7 +157,7 @@ public class LolService {
             order.add(id);
         }
         String when = toLocal(MapPath.string(match, "begin_at") != null
-                ? MapPath.string(match, "begin_at") : MapPath.string(match, "scheduled_at"));
+                ? MapPath.string(match, "begin_at") : MapPath.string(match, "scheduled_at"), zone);
         String event = String.join(" ",
                 nonNull(MapPath.string(match, "league", "name")),
                 nonNull(MapPath.string(match, "serie", "full_name")),
@@ -191,12 +189,12 @@ public class LolService {
         return when + " " + event + " | " + score + "（" + result + "，" + bestOf + "）";
     }
 
-    private String toLocal(String isoDate) {
+    private String toLocal(String isoDate, ZoneId zone) {
         if (isoDate == null) {
             return "时间待定";
         }
         try {
-            return OffsetDateTime.parse(isoDate).atZoneSameInstant(time.zone()).format(DISPLAY);
+            return OffsetDateTime.parse(isoDate).atZoneSameInstant(zone).format(DISPLAY);
         } catch (Exception e) {
             return isoDate;
         }

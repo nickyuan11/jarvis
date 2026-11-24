@@ -1,6 +1,7 @@
 package com.nick.jarvis.entity;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 
 import com.baomidou.mybatisplus.annotation.FieldFill;
 import com.baomidou.mybatisplus.annotation.IdType;
@@ -29,6 +30,15 @@ public class Message {
     private String role;
 
     private String content;
+
+    /** 只存定位信息，用户查看引用时再读取可用的资料原文。 */
+    private String citations;
+
+    private String timeZone;
+
+    public ZoneId sentZone() {
+        return ZoneId.of(timeZone == null ? "Asia/Shanghai" : timeZone);
+    }
 
     /** 生成回复的模型名称，用户消息为 null */
     private String model;

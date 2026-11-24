@@ -98,6 +98,21 @@ class KnowledgeSearchServiceTest {
     }
 
     @Test
+    void legacyVectorIsLocatedInOriginalWithoutReEmbedding() {
+        KnowledgeDocument doc = ready(202L, "合同.md");
+        doc.setContent("  违约金一个月\r\n\r\n提前通知可免除  ");
+        when(mapper.selectList(any())).thenReturn(List.of(doc));
+        when(mapper.selectById(202L)).thenReturn(doc);
+        String text = "违约金一个月\n\n提前通知可免除";
+        Document hit = Document.builder().text(text).metadata(Map.of("documentId", 202, "chunkIndex", 0)).build();
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of(hit, hit));
+
+        var range = service.search(USER_ID, "退租", null).hits().get(0).range();
+        assertThat(doc.getContent().substring(range.start(), range.end())).isEqualTo(doc.getContent().strip());
+        verify(mapper).selectById(202L);
+    }
+
+    @Test
     void documentNameNarrowsTheSearchToMatchingDocuments() {
         when(mapper.selectList(any())).thenReturn(List.of(ready(101L, "DEVLOG.md"), ready(202L, "2025租房合同-最终版.md")));
         when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of());

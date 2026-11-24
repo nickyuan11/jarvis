@@ -13,6 +13,18 @@ class TextChunkerTest {
     private final TextChunker chunker = new TextChunker(20, 5);
 
     @Test
+    void repeatedParagraphsKeepTheirOwnOriginalOffsetsAcrossCrLf() {
+        String text = "  abcdef\r\n\r\nabcdef\r\n\r\nabcdef  ";
+        var chunks = new TextChunker(6, 2).splitLocated(text);
+        var range = SourceRange.of(chunks, 1);
+        assertThat(chunks.get(1).text()).isEqualTo("ef\n\nabcdef");
+        assertThat(text.substring(range.start(), range.end())).isEqualTo("ef\r\n\r\nabcdef");
+        assertThat(text.substring(range.contextStart(), range.start())).isEqualTo("abcd");
+        assertThat(text.substring(range.end(), range.contextEnd())).isEqualTo("\r\n\r\nabcdef");
+        assertThat(chunks.get(2).start()).isGreaterThan(range.start());
+    }
+
+    @Test
     void shortTextIsOneChunk() {
         assertThat(chunker.split("你好，世界")).containsExactly("你好，世界");
     }
