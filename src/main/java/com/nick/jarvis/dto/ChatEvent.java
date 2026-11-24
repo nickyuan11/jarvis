@@ -1,5 +1,7 @@
 package com.nick.jarvis.dto;
 
+import java.util.List;
+
 /**
  * 流式接口推送给前端的事件内容，每个事件的 data 都是一段 JSON。
  * 用 JSON 而不是直接推纯文本，是因为 SSE 会吞掉 data 开头的空格、按换行拆分内容，
@@ -19,7 +21,7 @@ public final class ChatEvent {
     }
 
     /** 最后一个事件：本次回复结束，附带模型和 token 用量 */
-    public record Done(String model, Integer promptTokens, Integer completionTokens) {
+    public record Done(String model, Integer promptTokens, Integer completionTokens, Long messageId, List<Integer> citations) {
     }
 
     /** 出错时推送 */

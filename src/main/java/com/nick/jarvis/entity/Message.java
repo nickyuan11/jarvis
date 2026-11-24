@@ -31,6 +31,9 @@ public class Message {
 
     private String content;
 
+    /** 只存定位信息，用户查看引用时再读取可用的资料原文。 */
+    private String citations;
+
     private String timeZone;
 
     public ZoneId sentZone() {

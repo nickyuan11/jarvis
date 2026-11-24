@@ -128,11 +128,14 @@ public class DocumentProcessor {
         // 第一步先清掉旧块：上次可能处理到一半，或者这是从回收站恢复的资料
         deleteChunks(doc.getId());
 
-        List<String> texts = chunker.split(doc.getContent());
+        var texts = chunker.splitLocated(doc.getContent());
         List<Document> chunks = new ArrayList<>(texts.size());
         for (int i = 0; i < texts.size(); i++) {
             // 元数据：检索时按 userId、documentId 过滤；注明出处时用 filename 和 chunkIndex
-            chunks.add(new Document(texts.get(i), Map.of(
+            SourceRange range = SourceRange.of(texts, i);
+            chunks.add(new Document(texts.get(i).text(), Map.of(
+                    "contextStart", range.contextStart(), "start", range.start(),
+                    "end", range.end(), "contextEnd", range.contextEnd(),
                     "userId", doc.getUserId(),
                     "documentId", doc.getId(),
                     "chunkIndex", i,

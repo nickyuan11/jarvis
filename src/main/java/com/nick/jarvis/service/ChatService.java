@@ -9,6 +9,7 @@ import java.time.format.TextStyle;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.slf4j.Logger;
@@ -29,6 +30,7 @@ import com.nick.jarvis.dto.ChatEvent;
 import com.nick.jarvis.dto.ChatReply;
 import com.nick.jarvis.entity.Conversation;
 import com.nick.jarvis.entity.Message;
+import com.nick.jarvis.knowledge.ReplyCitations;
 import com.nick.jarvis.mapper.ConversationMapper;
 import com.nick.jarvis.mapper.MessageMapper;
 import com.nick.jarvis.ratelimit.RateLimiter;
@@ -114,7 +116,7 @@ public class ChatService {
                 .system(systemPrompt + memoryService.promptSection(prepared.userId(), prepared.zone()) + timeLine)
                 .messages(prepared.history())
                 .tools(tools)
-                .toolContext(Map.of(ToolContextKeys.USER_ID, prepared.userId(),
+                .toolContext(Map.of(ToolContextKeys.CITATIONS, prepared.citations(), ToolContextKeys.USER_ID, prepared.userId(),
                         ToolContextKeys.TIME_ZONE, prepared.zone(), ToolContextKeys.CONVERSATION_ID, prepared.conversationId()));
     }
 
@@ -133,8 +135,9 @@ public class ChatService {
         Integer promptTokens = usage == null ? null : usage.getPromptTokens();
         Integer completionTokens = usage == null ? null : usage.getCompletionTokens();
 
-        saveAssistantReply(prepared.conversationId(), replyText, model, promptTokens, completionTokens);
-        return new ChatReply(prepared.conversationId(), replyText, model, promptTokens, completionTokens);
+        Message saved = saveAssistantReply(prepared, replyText, model, promptTokens, completionTokens);
+        return new ChatReply(prepared.conversationId(), replyText, model, promptTokens, completionTokens,
+                saved.getId(), ReplyCitations.numbers(saved.getCitations()));
     }
 
     /**
@@ -147,7 +150,8 @@ public class ChatService {
         Long convId = prepared.conversationId();
 
         // 用来在流的过程中累积完整回复和最后的元数据
-        StringBuilder fullText = new StringBuilder();
+        StringBuffer fullText = new StringBuffer();
+        AtomicBoolean saving = new AtomicBoolean();
         AtomicReference<String> model = new AtomicReference<>();
         AtomicReference<Usage> usage = new AtomicReference<>();
 
@@ -177,8 +181,10 @@ public class ChatService {
             Usage u = usage.get();
             Integer promptTokens = u == null ? null : u.getPromptTokens();
             Integer completionTokens = u == null ? null : u.getCompletionTokens();
-            saveAssistantReply(convId, fullText.toString(), model.get(), promptTokens, completionTokens);
-            return Flux.just(event("done", new ChatEvent.Done(model.get(), promptTokens, completionTokens)));
+            if (!saving.compareAndSet(false, true)) return Flux.empty();
+            Message saved = saveAssistantReply(prepared, fullText.toString(), model.get(), promptTokens, completionTokens);
+            return Flux.just(event("done", new ChatEvent.Done(model.get(), promptTokens, completionTokens,
+                    saved.getId(), ReplyCitations.numbers(saved.getCitations()))));
         });
 
         return Flux.concat(
@@ -187,9 +193,9 @@ public class ChatService {
                         done)
                 // 用户中途关闭页面：把已经生成的部分保存下来，避免对话记录缺一截
                 .doOnCancel(() -> {
-                    if (!fullText.isEmpty()) {
+                    if (!fullText.isEmpty() && saving.compareAndSet(false, true)) {
                         log.info("Stream cancelled by client, saving partial reply, conversationId={}", convId);
-                        saveAssistantReply(convId, fullText.toString(), model.get(), null, null);
+                        saveAssistantReply(prepared, fullText.toString(), model.get(), null, null);
                     }
                 })
                 // 模型调用失败：不让异常直接断开连接，而是推一个 error 事件给前端展示
@@ -204,7 +210,7 @@ public class ChatService {
     // ------------------------------------------------------------------
 
     /** 前三步的结果：会话 id、当前用户 id、准备发给模型的历史消息 */
-    private record Prepared(Long conversationId, Long userId, ZoneId zone,
+    private record Prepared(Long conversationId, Long userId, ZoneId zone, ReplyCitations citations,
                             List<org.springframework.ai.chat.messages.Message> history) {
     }
 
@@ -221,8 +227,8 @@ public class ChatService {
         // 先限流再干活：被拒绝的请求不会写数据库，也不会调用大模型
         rateLimiter.check(CurrentUser.id());
         Conversation conversation = findOrCreateConversation(conversationId, userText);
-        saveMessage(conversation.getId(), Message.ROLE_USER, userText, zone.getId(), null, null, null);
-        return new Prepared(conversation.getId(), CurrentUser.id(), zone, loadHistory(conversation.getId()));
+        saveMessage(conversation.getId(), Message.ROLE_USER, userText, zone.getId(), null, null, null, null);
+        return new Prepared(conversation.getId(), CurrentUser.id(), zone, new ReplyCitations(), loadHistory(conversation.getId()));
     }
 
     private Conversation findOrCreateConversation(Long conversationId, String firstMessage) {
@@ -270,14 +276,17 @@ public class ChatService {
         return m.getCreateTime() == null ? "" : "（发送于 " + JarvisTime.local(m.getCreateTime(), m.sentZone()).format(SENT_AT) + " " + m.sentZone() + "）";
     }
 
-    private void saveAssistantReply(Long conversationId, String text, String model,
+    private Message saveAssistantReply(Prepared prepared, String text, String model,
                                     Integer promptTokens, Integer completionTokens) {
-        saveMessage(conversationId, Message.ROLE_ASSISTANT, text, null, model, promptTokens, completionTokens);
-        touchConversation(conversationId);
+        String citations = ReplyCitations.encode(prepared.citations().usedIn(text));
+        Message saved = saveMessage(prepared.conversationId(), Message.ROLE_ASSISTANT, text, null, model,
+                promptTokens, completionTokens, citations);
+        touchConversation(prepared.conversationId());
+        return saved;
     }
 
-    private void saveMessage(Long conversationId, String role, String content, String timeZone,
-                             String model, Integer promptTokens, Integer completionTokens) {
+    private Message saveMessage(Long conversationId, String role, String content, String timeZone,
+                             String model, Integer promptTokens, Integer completionTokens, String citations) {
         Message message = new Message();
         message.setConversationId(conversationId);
         message.setRole(role);
@@ -286,7 +295,9 @@ public class ChatService {
         message.setModel(model);
         message.setPromptTokens(promptTokens);
         message.setCompletionTokens(completionTokens);
+        message.setCitations(citations);
         messageMapper.insert(message);
+        return message;
     }
 
     /** 更新会话的 update_time，让最近聊过的会话排在列表前面 */

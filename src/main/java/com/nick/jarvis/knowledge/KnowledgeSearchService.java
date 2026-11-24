@@ -1,9 +1,9 @@
 package com.nick.jarvis.knowledge;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.springframework.ai.document.Document;
@@ -29,7 +29,7 @@ import com.nick.jarvis.mapper.KnowledgeDocumentMapper;
 public class KnowledgeSearchService {
 
     /** 检索到的一块资料 */
-    public record Hit(String filename, Long documentId, int chunkIndex, double score, String text) {
+    public record Hit(String filename, Long documentId, int chunkIndex, double score, String text, SourceRange range) {
     }
 
     /**
@@ -96,24 +96,40 @@ public class KnowledgeSearchService {
                 .filterExpression(filter)
                 .build());
 
+        // 老向量没有原文坐标。只为本次命中的旧资料重走原切块规则，同一份资料只读一次。
+        Map<Long, List<TextChunker.Chunk>> legacy = new HashMap<>();
         List<Hit> hits = found.stream()
-                .map(d -> toHit(d, filenames::get))
+                .filter(d -> filenames.containsKey(((Number) d.getMetadata().get("documentId")).longValue()))
+                .map(d -> toHit(d, filenames, userId, legacy))
                 // 最相关的放最前面：上下文越靠中间越容易被模型忽略（lost in the middle）
                 .sorted((a, c) -> Double.compare(c.score(), a.score()))
                 .toList();
         return new SearchResult(hits, scope.size(), note);
     }
 
-    private static Hit toHit(Document document, Function<Long, String> filenames) {
+    private Hit toHit(Document document, Map<Long, String> filenames, Long userId,
+                      Map<Long, List<TextChunker.Chunk>> legacy) {
         Map<String, Object> metadata = document.getMetadata();
         // 元数据从 PostgreSQL 的 JSON 读回来，数字可能是 Integer 也可能是 Long，统一按 Number 处理
         Long documentId = ((Number) metadata.get("documentId")).longValue();
         int chunkIndex = ((Number) metadata.get("chunkIndex")).intValue();
-        String filename = filenames.apply(documentId);
-        if (filename == null) {
-            filename = String.valueOf(metadata.get("filename"));
+        SourceRange range = null;
+        if (metadata.get("start") instanceof Number start && metadata.get("end") instanceof Number end
+                && metadata.get("contextStart") instanceof Number left && metadata.get("contextEnd") instanceof Number right) {
+            range = new SourceRange(left.intValue(), start.intValue(), end.intValue(), right.intValue());
+        } else {
+            List<TextChunker.Chunk> chunks = legacy.computeIfAbsent(documentId, id -> {
+                KnowledgeDocument doc = mapper.selectById(id);
+                if (doc == null || !userId.equals(doc.getUserId()) || !KnowledgeDocument.STATUS_READY.equals(doc.getStatus())) {
+                    return List.of();
+                }
+                return new TextChunker(500, 80).splitLocated(doc.getContent());
+            });
+            if (chunkIndex >= 0 && chunkIndex < chunks.size() && chunks.get(chunkIndex).text().equals(document.getText())) {
+                range = SourceRange.of(chunks, chunkIndex);
+            }
         }
         double score = document.getScore() == null ? 0 : document.getScore();
-        return new Hit(filename, documentId, chunkIndex, score, document.getText());
+        return new Hit(filenames.get(documentId), documentId, chunkIndex, score, document.getText(), range);
     }
 }

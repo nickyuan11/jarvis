@@ -258,10 +258,21 @@
         .toast button { border: none; padding: 0 4px; color: var(--muted); }
         @keyframes slide-in { from { transform: translateY(-8px); opacity: 0; } }
         .hint { max-width: 760px; margin: 6px auto 0; font-size: 12px; color: var(--muted); }
+        .bubble .citation { padding: 0 2px; color: var(--accent); background: none; border: 0; font: inherit; text-decoration: underline; cursor: pointer; }
+        #source-dialog { width: min(38rem, 90vw); }
+        #source-text { max-height: 55vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; }
+        #source-text mark { background: #ffedb1; color: #31270d; }
     </style>
 </head>
 <body>
 <div id="toasts" aria-live="polite"></div>
+<dialog id="source-dialog" aria-labelledby="source-title">
+    <form method="dialog">
+        <h2 id="source-title">引用原文</h2>
+        <p id="source-text" aria-live="polite"></p>
+        <div class="actions"><button>关闭</button></div>
+    </form>
+</dialog>
 <dialog id="settings">
     <form method="dialog" id="settings-form">
         <h2>提醒设置</h2>
@@ -455,7 +466,10 @@
         convLabel.textContent = c.title;
         messagesEl.innerHTML = messages.length ? '' : EMPTY_HTML;
         for (const m of messages) {
-            if (m.role === 'user' || m.role === 'assistant') addMessage(m.role, m.content);
+            if (m.role === 'user' || m.role === 'assistant') {
+                const bubble = addMessage(m.role, m.content);
+                if (m.role === 'assistant') renderCitations(bubble, m.id, m.citations);
+            }
         }
         renderConversations();
         input.focus();
@@ -526,6 +540,61 @@
         messagesEl.appendChild(wrap);
         scrollToBottom();
         return bubble;
+    }
+
+    // 只有后端已随消息保存的编号才可点击。普通文本（包括模型输出的 HTML）原样显示。
+    function renderCitations(bubble, messageId, numbers) {
+        if (!numbers?.length) return;
+        const valid = new Set(numbers);
+        const text = bubble.textContent;
+        const fragment = document.createDocumentFragment();
+        let end = 0;
+        for (const match of text.matchAll(/\[([1-9][0-9]{0,8})\]/g)) {
+            const number = Number(match[1]);
+            if (!valid.has(number)) continue;
+            fragment.append(text.slice(end, match.index));
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'citation';
+            button.textContent = match[0];
+            button.setAttribute('aria-label', '查看引用 ' + number + ' 的原文');
+            button.addEventListener('click', () => openCitation(messageId, number));
+            fragment.append(button);
+            end = match.index + match[0].length;
+        }
+        fragment.append(text.slice(end));
+        bubble.replaceChildren(fragment);
+    }
+
+    const sourceDialog = document.getElementById('source-dialog');
+    const sourceText = document.getElementById('source-text');
+    const sourceTitle = document.getElementById('source-title');
+    let sourceRequest = 0;
+    sourceDialog.addEventListener('close', () => {
+        // close 事件可能在用户再次打开弹窗后才送达。
+        if (sourceDialog.open) return;
+        sourceRequest++;
+        sourceText.replaceChildren();
+    });
+
+    async function openCitation(messageId, number) {
+        const request = ++sourceRequest;
+        sourceTitle.textContent = '引用 [' + number + ']';
+        sourceText.textContent = '正在读取原文…';
+        sourceDialog.showModal();
+        try {
+            const resp = await api('/api/messages/' + messageId + '/citations/' + number);
+            if (!resp.ok) throw new Error(resp.status === 404 ? '引用来源暂不可用' : '读取原文失败，请重试');
+            const source = await resp.json();
+            if (request !== sourceRequest) return;
+            sourceTitle.textContent += ' · ' + source.filename;
+            const mark = document.createElement('mark');
+            mark.textContent = source.excerpt;
+            sourceText.replaceChildren(source.before, mark, source.after);
+            mark.scrollIntoView({ block: 'nearest' });
+        } catch (err) {
+            if (request === sourceRequest) sourceText.textContent = err.message;
+        }
     }
 
     function addMeta(bubble, text) {
@@ -601,6 +670,7 @@
                         scrollToBottom();
                     } else if (ev.name === 'done') {
                         const d = ev.data;
+                        renderCitations(bubble, d.messageId, d.citations);
                         const parts = [];
                         if (d.model) parts.push(d.model);
                         if (d.promptTokens != null) parts.push('输入 ' + d.promptTokens + ' / 输出 ' + d.completionTokens + ' tokens');

@@ -11,6 +11,7 @@ import com.nick.jarvis.dto.ConversationView;
 import com.nick.jarvis.dto.MessageView;
 import com.nick.jarvis.entity.Conversation;
 import com.nick.jarvis.entity.Message;
+import com.nick.jarvis.knowledge.ReplyCitations;
 import com.nick.jarvis.mapper.ConversationMapper;
 import com.nick.jarvis.mapper.MessageMapper;
 import com.nick.jarvis.security.CurrentUser;
@@ -52,7 +53,8 @@ public class ConversationService {
                         .eq(Message::getConversationId, conversationId)
                         .orderByAsc(Message::getId))
                 .stream()
-                .map(m -> new MessageView(m.getId(), m.getRole(), m.getContent(), JarvisTime.instant(m.getCreateTime())))
+                .map(m -> new MessageView(m.getId(), m.getRole(), m.getContent(), JarvisTime.instant(m.getCreateTime()),
+                        ReplyCitations.numbers(m.getCitations())))
                 .toList();
     }
 
